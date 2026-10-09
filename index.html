@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b6e99">
+  <title>เกาะสีชัง</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <div id="offline" class="offline" hidden></div>
+    <header id="top" class="top"></header>
+    <main id="view" class="view"></main>
+    <button id="sos" class="sos" data-act="sos" aria-label="SOS">🆘</button>
+    <nav id="nav" class="nav" hidden>
+      <button data-act="tab" data-to="home"><span class="ni">🏠</span><span class="nl" data-nl="tab_home"></span></button>
+      <button data-act="tab" data-to="maps"><span class="ni">🗺️</span><span class="nl" data-nl="tab_maps"></span></button>
+      <button data-act="tab" data-to="book"><span class="ni">🎫</span><span class="nl" data-nl="tab_book"></span></button>
+      <button data-act="tab" data-to="travel"><span class="ni">⛴️</span><span class="nl" data-nl="tab_travel"></span></button>
+      <button data-act="tab" data-to="settings"><span class="ni">⚙️</span><span class="nl" data-nl="tab_settings"></span></button>
+    </nav>
+    <div id="toasts" class="toasts"></div>
+    <div id="modal" class="modal" data-act="closeModalBg" hidden></div>
+  </div>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
