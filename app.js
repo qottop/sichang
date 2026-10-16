@@ -2,25 +2,25 @@
 (function () {
   'use strict';
   const D = DATA, I = I18N;
-  const KEY = 'sichang_proto_v1';
+  const KEY = 'sichang_proto_v2';
   const BOOKING_POINTS = D.bookingPoints || 30;
   const $ = s => document.querySelector(s);
   const view = $('#view'), topEl = $('#top'), navEl = $('#nav'), modalEl = $('#modal'), toastsEl = $('#toasts'), offEl = $('#offline');
 
   /* ---------- state ---------- */
   function defaults() {
-    return { user: null, lang: 'th', notif: true, points: 0, log: [], checkins: {}, missions: {}, redeemed: [], bookings: [], ride: null, seq: 1 };
+    return { user: null, lang: 'th', notif: true, points: 0, log: [], checkins: {}, missions: {}, redeemed: [], bookings: [], ride: null, seq: 1, plan: { days: 1, cur: 1, items: [], seq: 1 } };
   }
   function load() { try { return Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { return defaults(); } }
   let S = load();
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 
   let route = { name: 'home' }, stack = [], afterFn = null, timers = [], modalFn = null, lastKey = '';
-  let mapLayer = 'food', bookTab = 'activity', bookCat = 'all', bookPrice = 'all';
+  let mapLayer = 'history', bookCat = 'all', bookPrice = 'all';
   let form = null, draft = null, payMethod = 'promptpay', ferryDir = 'in', authMode = 'login';
-  let rideForm = { pick: 'pier', drop: 'beach', type: 'tricycle' };
+  let rideForm = { pick: 'pier', drop: 'thamphang', type: 'tricycle' };
 
-  const ITEMS = D.activities.map(a => Object.assign({ kind: 'activity' }, a)).concat(D.services.map(s => Object.assign({ kind: 'service' }, s)));
+  const ITEMS = D.services.map(s => Object.assign({ kind: 'service' }, s));
   const itemById = id => ITEMS.find(i => i.id === id);
 
   /* ---------- helpers ---------- */
@@ -57,41 +57,64 @@
   function openModal(html) { modalEl.innerHTML = '<div class="sheet">' + html + '</div>'; modalEl.hidden = false; }
   function closeModal() { modalEl.hidden = true; modalEl.innerHTML = ''; modalFn = null; }
 
-  /* ---------- island SVG (วาดเอง) ---------- */
-  const ISL = 'M70 190 C60 130 110 80 170 70 C230 55 300 80 330 130 C360 180 340 240 290 270 C240 300 160 305 110 270 C85 250 72 225 70 190 Z';
+  /* ---------- แผนที่เกาะ (วาดเอง อิงตำแหน่งจริงโดยประมาณจากแผนที่เทศบาลตำบลเกาะสีชัง) ---------- */
+  const ISLAND_PTS = [[178, 48], [196, 62], [200, 88], [214, 112], [236, 134], [240, 162], [250, 196], [262, 222], [256, 248], [262, 276], [256, 306], [262, 336], [254, 366], [244, 396], [232, 424], [222, 452], [212, 480], [200, 506], [186, 508], [180, 484], [160, 452], [140, 428], [122, 400], [112, 372], [116, 344], [104, 316], [92, 290], [108, 262], [126, 244], [140, 222], [150, 196], [144, 170], [150, 140], [160, 112], [166, 84]];
+  function smoothPath(pts) {
+    const n = pts.length, f = v => v.toFixed(1);
+    let d = 'M' + f(pts[0][0]) + ' ' + f(pts[0][1]);
+    for (let i = 0; i < n; i++) {
+      const p0 = pts[(i - 1 + n) % n], p1 = pts[i], p2 = pts[(i + 1) % n], p3 = pts[(i + 2) % n];
+      d += ' C' + f(p1[0] + (p2[0] - p0[0]) / 6) + ' ' + f(p1[1] + (p2[1] - p0[1]) / 6) + ' ' + f(p2[0] - (p3[0] - p1[0]) / 6) + ' ' + f(p2[1] - (p3[1] - p1[1]) / 6) + ' ' + f(p2[0]) + ' ' + f(p2[1]);
+    }
+    return d + 'Z';
+  }
+  const ISL = smoothPath(ISLAND_PTS);
   function tree(x, y, s) {
     s = s || 1;
-    return '<g transform="translate(' + x + ' ' + y + ') scale(' + s + ')"><rect x="-1.6" y="0" width="3.2" height="10" rx="1" fill="#8a5a2b"/><circle cy="-2" r="7" fill="#2e8b3e"/><circle cx="-3" cy="-5" r="4" fill="#3da552"/></g>';
+    return '<g transform="translate(' + x + ' ' + y + ') scale(' + s + ')"><rect x="-1.6" y="0" width="3.2" height="9" rx="1" fill="#8a5a2b"/><circle cy="-2" r="6.5" fill="#2e8b3e"/><circle cx="-3" cy="-5" r="3.6" fill="#3da552"/></g>';
+  }
+  function islet(o) {
+    return '<g><ellipse cx="' + o.x + '" cy="' + o.y + '" rx="' + (o.rx + 3) + '" ry="' + (o.ry + 3) + '" fill="#fff" opacity=".6"/><ellipse cx="' + o.x + '" cy="' + o.y + '" rx="' + o.rx + '" ry="' + o.ry + '" fill="#f6e3b0"/><ellipse cx="' + o.x + '" cy="' + (o.y - 1) + '" rx="' + Math.max(2, o.rx - 4) + '" ry="' + Math.max(2, o.ry - 4) + '" fill="#6bb85a"/>' +
+      (o.name ? '<text x="' + o.x + '" y="' + (o.y + o.ry + 14) + '" class="isl-l" text-anchor="middle">' + esc(L(o.name)) + '</text>' : '') + '</g>';
   }
   function islandSVG(inner) {
-    const trees = [[118, 175, 1], [135, 150, 1.1], [205, 168, 1], [232, 196, 1.1], [255, 168, 1], [112, 238, .9], [320, 190, .9], [196, 238, 1], [290, 128, 1], [150, 105, .9], [232, 130, 1]];
-    return '<svg class="island" viewBox="0 0 400 340" role="img" aria-label="Ko Sichang map">' +
+    const trees = [[185, 92, 1], [170, 150, 1], [205, 140, 1], [160, 232, .9], [200, 275, 1], [150, 300, 1], [240, 360, .9], [222, 392, 1], [150, 392, .9], [190, 430, 1], [200, 452, .9], [176, 220, .9]];
+    return '<svg class="island" viewBox="0 0 400 560" role="img" aria-label="Ko Sichang map">' +
       '<defs><linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fe3f3"/><stop offset="1" stop-color="#1b9ac4"/></linearGradient>' +
       '<radialGradient id="grass" cx=".5" cy=".4" r=".7"><stop offset="0" stop-color="#9bdc72"/><stop offset="1" stop-color="#4fa64a"/></radialGradient></defs>' +
-      '<rect width="400" height="340" fill="url(#sea)"/>' +
+      '<rect width="400" height="560" fill="url(#sea)"/>' +
       '<g class="waves" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="2" stroke-linecap="round">' +
-      '<path d="M18 120q10-8 20 0t20 0"/><path d="M30 300q10-8 20 0t20 0"/><path d="M345 285q10-8 20 0t20 0"/><path d="M355 150q10-8 20 0t20 0"/><path d="M20 210q10-8 20 0t20 0"/><path d="M180 322q10-8 20 0t20 0"/><path d="M300 52q10-8 20 0t20 0"/></g>' +
-      '<circle cx="352" cy="38" r="22" fill="#ffe27a"/><circle cx="352" cy="38" r="30" fill="#ffe27a" opacity=".3"/>' +
+      '<path d="M20 120q10-8 20 0t20 0"/><path d="M30 440q10-8 20 0t20 0"/><path d="M300 400q10-8 20 0t20 0"/><path d="M340 300q10-8 20 0t20 0"/><path d="M20 210q10-8 20 0t20 0"/><path d="M120 520q10-8 20 0t20 0"/><path d="M280 60q10-8 20 0t20 0"/><path d="M40 360q10-8 20 0t20 0"/><path d="M300 500q10-8 20 0t20 0"/></g>' +
+      '<circle cx="360" cy="34" r="22" fill="#ffe27a"/><circle cx="360" cy="34" r="30" fill="#ffe27a" opacity=".3"/>' +
       '<g class="cloud" fill="#fff" opacity=".9"><ellipse cx="70" cy="40" rx="26" ry="10"/><ellipse cx="88" cy="34" rx="18" ry="10"/><ellipse cx="55" cy="36" rx="14" ry="8"/></g>' +
+      D.islets.map(islet).join('') +
       '<path d="' + ISL + '" fill="none" stroke="#fff" stroke-opacity=".7" stroke-width="12"/>' +
       '<path d="' + ISL + '" fill="#f6e3b0"/>' +
-      '<path d="' + ISL + '" fill="url(#grass)" transform="translate(200 185) scale(.86) translate(-200 -185)"/>' +
-      '<path d="M120 205 Q165 100 215 150 Q250 90 300 175 Q220 215 120 205Z" fill="#6bb85a" opacity=".85"/>' +
-      '<path d="M215 150 Q250 90 300 175 Q270 160 215 150Z" fill="#4c9a49" opacity=".9"/>' +
+      '<path d="' + ISL + '" fill="url(#grass)" transform="translate(180 278) scale(.8 .96) translate(-180 -278)"/>' +
+      '<g fill="#3f9141" opacity=".55"><ellipse cx="183" cy="104" rx="15" ry="22"/><ellipse cx="182" cy="168" rx="26" ry="20"/><ellipse cx="196" cy="414" rx="22" ry="24"/></g>' +
       trees.map(a => tree(a[0], a[1], a[2])).join('') +
-      '<g class="boat" transform="translate(30 270)"><path d="M0 8 L36 8 L30 18 L6 18 Z" fill="#ff7a59"/><rect x="16" y="-8" width="2.5" height="16" fill="#6b4a2a"/><path d="M19 -8 L19 6 L32 6 Z" fill="#fff"/></g>' +
+      '<g fill="none" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M170 100 L190 140 L206 196 L232 250 L236 296 L226 334 L236 408 L210 450 L198 470 M206 196 L146 190 M206 196 L246 168 M232 250 L250 246 M200 262 L176 262 L130 338" stroke="#d9c58f" stroke-width="7"/>' +
+      '<path d="M170 100 L190 140 L206 196 L232 250 L236 296 L226 334 L236 408 L210 450 L198 470 M206 196 L146 190 M206 196 L246 168 M232 250 L250 246 M200 262 L176 262 L130 338" stroke="#fffdf5" stroke-width="4"/></g>' +
+      '<path d="M243 171 L282 179" stroke="#8a5a2b" stroke-width="5" stroke-linecap="round"/><path d="M255 246 L298 246" stroke="#8a5a2b" stroke-width="5" stroke-linecap="round"/>' +
+      '<g transform="translate(300 318)"><g class="boat"><path d="M0 8 L36 8 L30 18 L6 18 Z" fill="#ff7a59"/><rect x="16" y="-8" width="2.5" height="16" fill="#6b4a2a"/><path d="M19 -8 L19 6 L32 6 Z" fill="#fff"/></g></g>' +
+      '<g transform="translate(40 506)"><circle r="17" fill="#fff" opacity=".85"/><path d="M0 -13 L5 3 L0 0 L-5 3 Z" fill="#e53935"/><text y="14" text-anchor="middle" font-size="9" font-weight="800" fill="#0b4a6f">N</text></g>' +
+      '<text x="200" y="548" text-anchor="middle" class="map-note">' + esc(t('map_note')) + '</text>' +
       (inner || '') + '</svg>';
   }
-  function pin(x, y, icon, label, act, id, done) {
-    return '<g class="pin" data-act="' + act + '" data-id="' + id + '" transform="translate(' + x + ' ' + y + ')" tabindex="0" role="button">' +
-      '<circle class="pulse" r="18"/><circle class="pb ' + (done ? 'done' : '') + '" r="15"/>' +
-      '<text class="pi" y="6" text-anchor="middle">' + icon + '</text>' +
-      (label ? '<text class="pl" y="33" text-anchor="middle">' + esc(label) + '</text>' : '') +
-      (done ? '<circle cx="12" cy="-12" r="7" fill="#22c55e"/><text x="12" y="-9" text-anchor="middle" class="pc">✓</text>' : '') + '</g>';
+  function pin(x, y, icon, label, act, id, done, side, cls) {
+    const lp = { b: [0, 27, 'middle'], t: [0, -19, 'middle'], r: [17, 4, 'start'], l: [-17, 4, 'end'] }[side || 'b'];
+    return '<g class="pin ' + (cls || '') + '" data-act="' + act + '" data-id="' + id + '" transform="translate(' + x + ' ' + y + ')" tabindex="0" role="button" aria-label="' + esc(label) + '">' +
+      '<g transform="scale(.8)"><circle class="pulse" r="18"/><circle class="pb ' + (done ? 'done' : '') + '" r="15"/><text class="pi" y="6" text-anchor="middle">' + icon + '</text></g>' +
+      (label ? '<text class="pl" x="' + lp[0] + '" y="' + lp[1] + '" text-anchor="' + lp[2] + '">' + esc(label) + '</text>' : '') +
+      (done ? '<circle cx="9" cy="-9" r="6" fill="#22c55e"/><text x="9" y="-6.2" text-anchor="middle" class="pc">✓</text>' : '') + '</g>';
   }
+  const pinById = id => D.pins.find(p => p.id === id);
+  const pinDone = id => !!S.checkins['p_' + id + '|' + ymd()];
+  function mapPin(p) { return pin(p.x, p.y, p.icon, L(p.short || p.name), 'pin', p.id, pinDone(p.id), p.side); }
 
   /* ---------- navigation ---------- */
-  const TAB_OF = { home: 'home', missions: 'home', points: 'home', rewards: 'home', maps: 'maps', book: 'book', detail: 'book', checkout: 'book', status: 'book', provider: 'book', travel: 'travel', ride: 'travel', driver: 'travel', settings: 'settings' };
+  const TAB_OF = { home: 'home', missions: 'home', plan: 'home', points: 'home', rewards: 'home', maps: 'maps', book: 'book', detail: 'book', checkout: 'book', status: 'book', provider: 'book', travel: 'travel', ride: 'travel', driver: 'travel', settings: 'settings' };
   function go(name, arg, replace) { if (!replace) stack.push(route); route = { name: name, arg: arg }; render(); }
   function goTab(name) { stack = []; route = { name: name }; render(); }
   function back() { route = stack.pop() || { name: 'home' }; render(); }
@@ -123,7 +146,7 @@
     if (!S.user && route.name !== 'login') { route = { name: 'login' }; stack = []; }
     advanceBookings();
     document.documentElement.lang = S.lang;
-    const pages = { login: pLogin, home: pHome, missions: pMissions, points: pPoints, rewards: pRewards, maps: pMaps, book: pBook, detail: pDetail, checkout: pCheckout, status: pStatus, provider: pProvider, travel: pTravel, ride: pRide, driver: pDriver, settings: pSettings };
+    const pages = { login: pLogin, home: pHome, plan: pPlan, missions: pMissions, points: pPoints, rewards: pRewards, maps: pMaps, book: pBook, detail: pDetail, checkout: pCheckout, status: pStatus, provider: pProvider, travel: pTravel, ride: pRide, driver: pDriver, settings: pSettings };
     const html = (pages[route.name] || pHome)();
     view.innerHTML = html;
     const key = route.name + '|' + route.arg;
@@ -134,31 +157,24 @@
 
   /* ================= Flow 2: Home / ภารกิจ / คะแนน / รางวัล ================= */
   function pHome() {
-    const pins = D.spots.map(s => pin(s.x, s.y, s.icon, L(s.name), 'spot', s.id, !!S.checkins[s.id + '|' + ymd()])).join('');
+    const pins = D.pins.filter(p => p.home).map(mapPin).join('');
     const name = S.user.guest ? t('guest_user') : S.user.name;
     return '<div class="hero"><div><h2>' + t('hello') + ' ' + esc(name) + ' 👋</h2><p>' + t('welcome_sub') + '</p></div><div class="pts">⭐ ' + S.points + '</div></div>' +
       '<div class="quick">' +
       '<button data-act="go" data-to="missions"><span>🗝️</span>' + t('qb_missions') + '</button>' +
       '<button data-act="go" data-to="points"><span>⭐</span>' + t('qb_points') + '</button>' +
-      '<button data-act="go" data-to="rewards"><span>🎁</span>' + t('qb_rewards') + '</button></div>' +
+      '<button data-act="go" data-to="rewards"><span>🎁</span>' + t('qb_rewards') + '</button>' +
+      '<button data-act="go" data-to="plan"><span>🗓️</span>' + t('qb_plan') + '</button></div>' +
       '<div class="mapcard">' + islandSVG(pins) + '</div>' +
       '<p class="muted center">👆 ' + t('tap_hint') + '</p>';
   }
-  function spotModal(id) {
-    const s = D.spots.find(x => x.id === id), key = id + '|' + ymd(), done = !!S.checkins[key];
-    modalFn = () => spotModal(id);
-    openModal('<div class="grab"></div><div class="row"><div class="thumb">' + s.icon + '</div><div class="grow"><h3>' + esc(L(s.name)) + '</h3><div class="muted">' + t('checkin_rule', { n: D.checkinPoints }) + '</div></div></div>' +
-      '<p>' + esc(L(s.desc)) + '</p>' +
-      '<button class="btn block" data-act="checkin" data-kind="spot" data-id="' + id + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓ ' + t('checked') : '📍 ' + t('checkin')) + '</button>' +
-      '<button class="btn ghost block mt" data-act="closeModal">' + t('close') + '</button>');
-  }
-  function doCheckin(kind, id) {
-    let key, name, src;
-    if (kind === 'spot') { const s = D.spots.find(x => x.id === id); key = id + '|' + ymd(); name = L(s.name); src = id === 'waste' ? 'waste' : 'checkin'; }
-    else { const p = D.pins.find(x => x.id === id); key = 'p_' + id + '|' + ymd(); name = L(p.name); src = p.layer === 'waste' ? 'waste' : 'checkin'; }
+  function doCheckin(id) {
+    const p = pinById(id);
+    if (!p) return;
+    const key = 'p_' + id + '|' + ymd();
     if (S.checkins[key]) return;
     S.checkins[key] = true;
-    addPoints(D.checkinPoints, src, name);
+    addPoints(D.checkinPoints, p.layer === 'waste' ? 'waste' : 'checkin', L(p.name));
     toast(t('checkin_ok', { n: D.checkinPoints }), 'ok');
     render(); if (modalFn) modalFn();
   }
@@ -222,23 +238,24 @@
   }
 
   /* ================= Flow 3: Maps ================= */
-  const LAYERS = ['food', 'history', 'waste'];
+  const LAYERS = ['history', 'food', 'waste'];
   const LAYER_ICON = { food: '🍤', history: '🏛️', waste: '♻️' };
   function pMaps() {
-    const pins = D.pins.filter(p => p.layer === mapLayer).map(p => pin(p.x, p.y, p.icon, L(p.name), 'pin', p.id, !!S.checkins['p_' + p.id + '|' + ymd()])).join('');
+    const pins = D.pins.filter(p => p.layer === mapLayer).map(mapPin).join('');
     return '<div class="chips">' + LAYERS.map(l => '<button class="chip ' + (l === mapLayer ? 'on' : '') + '" data-act="layer" data-v="' + l + '">' + LAYER_ICON[l] + ' ' + t('layer_' + l) + '</button>').join('') + '</div>' +
       '<div class="mapcard">' + islandSVG(pins) + '</div><p class="muted center">👆 ' + t('tap_hint') + '<br>' + t('sample_note') + ' · ' + t('mock_note') + '</p>';
   }
   function pinModal(id) {
-    const p = D.pins.find(x => x.id === id), key = 'p_' + id + '|' + ymd(), done = !!S.checkins[key];
+    const p = pinById(id), done = pinDone(id);
     modalFn = () => pinModal(id);
     let body = '';
     if (p.layer === 'food') body = '<p>🍽️ <b>' + t('menu_rec') + ':</b> ' + esc(L(p.menu)) + '</p><p>💰 <b>' + t('price_range') + ':</b> ' + esc(L(p.price)) + '</p>';
     else if (p.layer === 'history') body = '<p>📖 <b>' + t('story') + ':</b> ' + esc(L(p.story)) + '</p>';
     else body = '<p>🗑️ <b>' + t('bin_types') + ':</b> ' + esc(L(p.bins)) + '</p>';
-    openModal('<div class="grab"></div><div class="row"><div class="thumb">' + p.icon + '</div><div class="grow"><h3>' + esc(L(p.name)) + '</h3><div class="muted">' + t('layer_' + p.layer) + '</div></div></div>' + body +
+    openModal('<div class="grab"></div><div class="row"><div class="thumb">' + p.icon + '</div><div class="grow"><h3>' + esc(L(p.name)) + '</h3><div class="muted">' + t('layer_' + p.layer) + ' · ' + t('checkin_rule', { n: D.checkinPoints }) + '</div></div></div>' + body +
       '<div class="row mt"><button class="btn ghost grow" data-act="navigate" data-id="' + id + '">🧭 ' + t('navigate') + '</button>' +
-      '<button class="btn grow" data-act="checkin" data-kind="pin" data-id="' + id + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓ ' + t('checked') : '📍 ' + t('checkin')) + '</button></div>' +
+      '<button class="btn ghost grow" data-act="padd" data-kind="pin" data-ref="' + id + '">🗓️ ' + t('plan_from_pin') + '</button></div>' +
+      '<button class="btn block mt" data-act="checkin" data-id="' + id + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓ ' + t('checked') : '📍 ' + t('checkin')) + '</button>' +
       '<button class="btn ghost block mt" data-act="closeModal">' + t('close') + '</button>');
   }
 
@@ -257,40 +274,41 @@
   }
   const hh = h => pad(h) + ':00';
 
+  const slotsOf = it => it.slots || D.timeSlots;
   function pBook() {
-    const cats = bookTab === 'activity' ? ['all', 'sea', 'land', 'culture'] : ['all', 'guide', 'photo', 'boat'];
-    const items = ITEMS.filter(i => i.kind === bookTab && (bookCat === 'all' || i.cat === bookCat) &&
+    const cats = ['all', 'squid', 'guide', 'photo'];
+    const items = ITEMS.filter(i => (bookCat === 'all' || i.cat === bookCat) &&
       (bookPrice === 'all' || (bookPrice === 'low' && i.price <= 500) || (bookPrice === 'mid' && i.price > 500 && i.price <= 1000) || (bookPrice === 'high' && i.price > 1000)));
-    return '<div class="seg"><button class="' + (bookTab === 'activity' ? 'on' : '') + '" data-act="btab" data-v="activity">🏄 ' + t('tab_activities') + '</button><button class="' + (bookTab === 'service' ? 'on' : '') + '" data-act="btab" data-v="service">🧑‍🤝‍🧑 ' + t('tab_services') + '</button></div>' +
-      '<div class="chips">' + cats.map(c => '<button class="chip ' + (c === bookCat ? 'on' : '') + '" data-act="bcat" data-v="' + c + '">' + (c === 'all' ? t('all') : t('cat_' + c)) + '</button>').join('') + '</div>' +
+    return '<div class="chips">' + cats.map(c => '<button class="chip ' + (c === bookCat ? 'on' : '') + '" data-act="bcat" data-v="' + c + '">' + (c === 'all' ? t('all') : (c === 'squid' ? '🦑 ' : '') + t('cat_' + c)) + '</button>').join('') + '</div>' +
       '<label class="field"><span>💰 ' + t('price_all') + '</span><select data-change="bookPrice">' +
       [['all', 'price_all'], ['low', 'price_low'], ['mid', 'price_mid'], ['high', 'price_high']].map(o => '<option value="' + o[0] + '" ' + (bookPrice === o[0] ? 'selected' : '') + '>' + t(o[1]) + '</option>').join('') + '</select></label>' +
-      (items.length ? items.map(i => '<button class="item" data-act="item" data-id="' + i.id + '"><div class="thumb">' + i.emoji + '</div><div class="grow"><b>' + esc(L(i.name)) + '</b><div class="muted">' + t('cat_' + i.cat) + ' · ⭐ ' + i.provider.rating + '</div><div class="price">' + money(i.price) + ' <span class="muted">' + (i.kind === 'activity' ? t('per_person') : t('per_trip')) + '</span></div></div><span>›</span></button>').join('') : '<p class="muted center">' + t('no_items') + '</p>');
+      (items.length ? items.map(i => '<button class="item" data-act="item" data-id="' + i.id + '"><div class="thumb">' + i.emoji + '</div><div class="grow"><b>' + esc(L(i.name)) + '</b><div class="muted">' + t('cat_' + i.cat) + ' · ⭐ ' + i.provider.rating + '</div><div class="price">' + money(i.price) + ' <span class="muted">' + (i.unit === 'person' ? t('per_person') : t('per_trip')) + '</span></div></div><span>›</span></button>').join('') : '<p class="muted center">' + t('no_items') + '</p>');
   }
-  function itemTotal(it, f) { return it.price * (it.kind === 'activity' ? f.people : 1); }
+  function itemTotal(it, f) { return it.price * (it.unit === 'person' ? f.people : 1); }
   function pDetail() {
     const it = itemById(route.arg);
     if (!it) return '<p>?</p>';
-    if (!form || form.id !== it.id) form = { id: it.id, date: ymd(), time: D.timeSlots[0], people: 1 };
+    if (!form || form.id !== it.id) form = { id: it.id, date: ymd(), time: slotsOf(it)[0], people: 1 };
     let tideBox = '';
     if (it.sea) {
       const ex = tideExtrema(), hi = ex.filter(e => e.type === 'high').sort((a, b) => b.v - a.v)[0], lo = ex.filter(e => e.type === 'low').sort((a, b) => a.v - b.v)[0];
       tideBox = '<div class="warn">🌊 <b>' + t('tide_warn') + '</b><br>' + t('tide_high_at') + ' ' + hh(hi.h) + ' (' + hi.v + ' ' + t('meter') + ') · ' + t('tide_low_at') + ' ' + hh(lo.h) + ' (' + lo.v + ' ' + t('meter') + ')<br><span class="muted">' + t('tide_advice') + ' (' + t('mock_note') + ')</span></div>';
     }
     return '<div class="thumb hero2">' + it.emoji + '</div><h2 style="margin:0 0 4px">' + esc(L(it.name)) + '</h2>' +
-      '<div class="price" style="font-size:20px">' + money(it.price) + ' <span class="muted" style="font-size:13px">' + (it.kind === 'activity' ? t('per_person') : t('per_trip')) + '</span></div>' +
+      '<div class="price" style="font-size:20px">' + money(it.price) + ' <span class="muted" style="font-size:13px">' + (it.unit === 'person' ? t('per_person') : t('per_trip')) + '</span></div>' +
       '<p>' + esc(L(it.desc)) + '</p>' + tideBox +
       '<button class="item" data-act="provider" data-id="' + it.id + '"><div class="avatar">' + it.provider.emoji + '</div><div class="grow"><div class="muted">' + t('provider') + '</div><b>' + esc(L(it.provider.name)) + '</b><div class="muted">⭐ ' + it.provider.rating + ' (' + it.provider.reviews + ' ' + t('reviews') + ')</div></div><span>›</span></button>' +
       '<div class="card"><label class="field"><span>📅 ' + t('date') + '</span><input type="date" data-change="date" min="' + ymd() + '" value="' + form.date + '"></label>' +
-      '<label class="field"><span>⏰ ' + t('time') + '</span><select data-change="time">' + D.timeSlots.map(s => '<option ' + (form.time === s ? 'selected' : '') + '>' + s + '</option>').join('') + '</select></label>' +
-      (it.kind === 'activity' ? '<div class="field"><span>👥 ' + t('people') + '</span><div class="stepper"><button data-act="people" data-v="-1">−</button><b>' + form.people + '</b><button data-act="people" data-v="1">+</button></div></div>' : '') +
+      '<label class="field"><span>⏰ ' + t('time') + '</span><select data-change="time">' + slotsOf(it).map(s => '<option ' + (form.time === s ? 'selected' : '') + '>' + s + '</option>').join('') + '</select></label>' +
+      (it.unit === 'person' ? '<div class="field"><span>👥 ' + t('people') + '</span><div class="stepper"><button data-act="people" data-v="-1">−</button><b>' + form.people + '</b><button data-act="people" data-v="1">+</button></div></div>' : '') +
       '<div class="row between"><span>' + t('total') + '</span><b class="price" style="font-size:20px">' + money(itemTotal(it, form)) + '</b></div></div>' +
-      '<button class="btn block" data-act="toCheckout">🎫 ' + t('book_now') + '</button>';
+      '<button class="btn block" data-act="toCheckout">🎫 ' + t('book_now') + '</button>' +
+      '<button class="btn ghost block mt" data-act="padd" data-kind="service" data-ref="' + it.id + '">🗓️ ' + t('plan_from_pin') + '</button>';
   }
   function pCheckout() {
     if (!draft) return pBook();
     const it = itemById(draft.id), total = itemTotal(it, draft);
-    return '<div class="card"><h3>🧾 ' + t('booking_summary') + '</h3><div class="row"><div class="thumb">' + it.emoji + '</div><div class="grow"><b>' + esc(L(it.name)) + '</b><div class="muted">' + draft.date + ' · ' + draft.time + (it.kind === 'activity' ? ' · 👥 ' + draft.people : '') + '</div></div></div>' +
+    return '<div class="card"><h3>🧾 ' + t('booking_summary') + '</h3><div class="row"><div class="thumb">' + it.emoji + '</div><div class="grow"><b>' + esc(L(it.name)) + '</b><div class="muted">' + draft.date + ' · ' + draft.time + (it.unit === 'person' ? ' · 👥 ' + draft.people : '') + '</div></div></div>' +
       '<div class="row between mt"><span>' + t('total') + '</span><b class="price" style="font-size:20px">' + money(total) + '</b></div><p class="muted">' + t('booking_pts_note', { n: BOOKING_POINTS }) + '</p></div>' +
       '<div class="card"><h3>' + t('pay_method') + '</h3>' +
       [['promptpay', 'pay_promptpay', '📱'], ['card', 'pay_card', '💳'], ['cash', 'pay_cash', '💵']].map(m => '<label class="field row" style="cursor:pointer"><input type="radio" name="pay" data-change="pay" value="' + m[0] + '" ' + (payMethod === m[0] ? 'checked' : '') + ' style="width:auto"> <span style="margin:0">' + m[2] + ' ' + t(m[1]) + '</span></label>').join('') +
@@ -317,7 +335,7 @@
     return '<div class="card"><div class="row between"><h3>' + t('booking_code') + ' ' + b.id + '</h3><span class="badge ' + b.status + '">' + t(labels[idx]) + '</span></div>' +
       '<div class="steps">' + labels.map((l, i) => '<div class="step ' + (i < idx ? 'done' : i === idx ? (idx === 2 ? 'done' : 'now') : '') + '"><i>' + (i < idx || (i === idx && idx === 2) ? '✓' : i + 1) + '</i><div><b>' + t(l) + '</b>' + (i === idx && b.status === 'pending' ? '<div class="muted">' + t('pending_note') + '</div>' : '') + '</div></div>').join('') + '</div>' +
       (b.status === 'confirmed' ? '<button class="btn block" data-act="finish" data-id="' + b.id + '">✅ ' + t('mark_done') + '</button><p class="muted center">' + t('booking_pts_note', { n: BOOKING_POINTS }) + '</p>' : '') + '</div>' +
-      '<div class="card"><div class="row"><div class="thumb">' + it.emoji + '</div><div class="grow"><b>' + esc(L(it.name)) + '</b><div class="muted">' + b.date + ' · ' + b.time + (it.kind === 'activity' ? ' · 👥 ' + b.people : '') + '</div><div class="price">' + money(b.total) + '</div></div></div></div>' +
+      '<div class="card"><div class="row"><div class="thumb">' + it.emoji + '</div><div class="grow"><b>' + esc(L(it.name)) + '</b><div class="muted">' + b.date + ' · ' + b.time + (it.unit === 'person' ? ' · 👥 ' + b.people : '') + '</div><div class="price">' + money(b.total) + '</div></div></div></div>' +
       '<button class="btn ghost block" data-act="provider" data-id="' + it.id + '">👤 ' + t('view_provider') + '</button>';
   }
   function doFinish(id) {
@@ -336,6 +354,76 @@
       '<div class="muted">' + esc(L(it.name)) + '</div>' +
       '<div class="row mt" style="justify-content:center;gap:24px"><div><div class="big" style="font-size:28px">⭐ ' + p.rating + '</div><div class="muted">' + t('rating') + '</div></div><div><div class="big" style="font-size:28px">' + p.reviews + '</div><div class="muted">' + t('reviews') + '</div></div></div></div>' +
       '<div class="card row between"><div><div class="muted">📞 ' + t('phone') + '</div><b>' + p.phone + '</b></div><a class="btn sm" style="text-decoration:none" href="tel:' + p.phone.replace(/[^0-9]/g, '') + '">' + t('call') + '</a></div>';
+  }
+
+  /* ================= แพลนเที่ยว ================= */
+  function planKind(ref) { return pinById(ref) ? 'pin' : 'service'; }
+  function planInfo(it) {
+    if (it.kind === 'pin') { const p = pinById(it.ref); return p ? { emoji: p.icon, name: L(p.name), pin: p } : null; }
+    const s = itemById(it.ref); return s ? { emoji: s.emoji, name: L(s.name), svc: s } : null;
+  }
+  function planDay(day) { return S.plan.items.filter(i => i.day === day).sort((a, b) => a.time.localeCompare(b.time) || a.uid - b.uid); }
+  function addToPlan(kind, ref, day) {
+    day = day || S.plan.cur;
+    if (S.plan.items.some(i => i.day === day && i.kind === kind && i.ref === ref)) { toast(t('plan_dup'), 'warn'); return false; }
+    let time = '09:00';
+    if (kind === 'service') time = slotsOf(itemById(ref))[0];
+    else { const list = planDay(day); if (list.length) time = pad(Math.min(20, parseInt(list[list.length - 1].time, 10) + 1)) + ':00'; }
+    S.plan.items.push({ uid: S.plan.seq++, day: day, kind: kind, ref: ref, time: time });
+    save(); toast(t('plan_added', { n: day }), 'ok');
+    return true;
+  }
+  function pPlan() {
+    const P = S.plan, day = P.cur, list = planDay(day);
+    const tabs = '<div class="daytabs">' + Array.from({ length: P.days }, (_, i) => '<button class="chip ' + (i + 1 === day ? 'on' : '') + '" data-act="pday" data-v="' + (i + 1) + '">📅 ' + t('plan_day', { n: i + 1 }) + '</button>').join('') +
+      (P.days < 3 ? '<button class="chip" data-act="paddday">＋ ' + t('plan_add_day') + '</button>' : '') + '</div>';
+    const rows = list.map((it, i) => {
+      const inf = planInfo(it); if (!inf) return '';
+      return '<div class="pitem"><span class="no">' + (i + 1) + '</span><div class="grow"><b>' + inf.emoji + ' ' + esc(inf.name) + '</b>' +
+        (inf.svc ? '<div><button class="btn sm ghost" style="margin-top:4px" data-act="item" data-id="' + inf.svc.id + '">🎫 ' + t('plan_view_book') + '</button></div>' : '') + '</div>' +
+        '<input type="time" data-change="ptime" data-uid="' + it.uid + '" value="' + it.time + '">' +
+        '<button class="xbtn" data-act="pdel" data-uid="' + it.uid + '" aria-label="remove">✕</button></div>';
+    }).join('');
+    const pts = [];
+    list.forEach((it, i) => { if (it.kind === 'pin') { const p = pinById(it.ref); if (p) pts.push({ p: p, n: i + 1 }); } });
+    const line = pts.length > 1 ? '<polyline points="' + pts.map(q => q.p.x + ',' + q.p.y).join(' ') + '" fill="none" stroke="#ff7a59" stroke-width="3" stroke-dasharray="7 5" stroke-linecap="round" stroke-linejoin="round"/>' : '';
+    const markers = pts.map(q => pin(q.p.x, q.p.y, q.n, L(q.p.short || q.p.name), 'pin', q.p.id, false, q.p.side, 'num')).join('');
+    return tabs +
+      '<div class="row" style="margin-bottom:10px"><button class="btn grow" data-act="popenadd">＋ ' + t('plan_add') + '</button><button class="btn ghost" data-act="ptplopen">✨ ' + t('plan_templates') + '</button></div>' +
+      (rows ? rows + '<p class="muted center">' + t('plan_hint') + '</p>' : '<div class="card center muted">' + t('plan_empty') + '</div>') +
+      '<div class="card"><h3>🧭 ' + t('plan_route') + '</h3><div class="mapcard" style="margin:0">' + islandSVG(line + markers) + '</div></div>' +
+      '<div class="card row between"><span>⛴️ ' + t('plan_ferry_tip') + '</span><button class="btn sm" data-act="tab" data-to="travel">' + t('go_travel') + '</button></div>' +
+      '<div class="row"><button class="btn danger grow" data-act="pdelday">' + t('plan_remove_day') + '</button><button class="btn danger grow" data-act="pclear">' + t('plan_clear') + '</button></div>';
+  }
+  function planAddModal() {
+    modalFn = planAddModal;
+    const day = S.plan.cur, has = (k, r) => S.plan.items.some(i => i.day === day && i.kind === k && i.ref === r);
+    const row = (kind, ref, emoji, name) => '<button class="item" style="padding:8px 10px;margin-bottom:6px" data-act="padd" data-kind="' + kind + '" data-ref="' + ref + '"' + (has(kind, ref) ? ' disabled' : '') + '><span style="font-size:22px">' + emoji + '</span><span class="grow"><b>' + esc(name) + '</b></span><span>' + (has(kind, ref) ? '✓' : '＋') + '</span></button>';
+    const sec = (key, rows) => '<h4 style="margin:12px 0 6px">' + t(key) + '</h4>' + rows;
+    openModal('<div class="grab"></div><h3>🗓️ ' + t('plan_add') + ' · ' + t('plan_day', { n: day }) + '</h3>' +
+      sec('plan_places', D.pins.filter(p => p.layer === 'history').map(p => row('pin', p.id, p.icon, L(p.name))).join('')) +
+      sec('plan_food', D.pins.filter(p => p.layer === 'food').map(p => row('pin', p.id, p.icon, L(p.name))).join('')) +
+      sec('plan_services', ITEMS.map(s => row('service', s.id, s.emoji, L(s.name))).join('')) +
+      '<button class="btn ghost block mt" data-act="closeModal">' + t('close') + '</button>');
+  }
+  function planTplModal() {
+    modalFn = planTplModal;
+    openModal('<div class="grab"></div><h3>✨ ' + t('plan_templates') + '</h3>' +
+      D.planTemplates.map(tp => '<div class="card" style="box-shadow:none;background:#f2fbfe"><b>' + esc(L(tp.name)) + '</b> <span class="badge done">' + t('plan_ndays', { n: tp.days.length }) + '</span><div class="muted">' + esc(L(tp.desc)) + '</div><button class="btn sm mt" data-act="ptpl" data-id="' + tp.id + '">' + t('plan_use') + '</button></div>').join('') +
+      '<button class="btn ghost block mt" data-act="closeModal">' + t('close') + '</button>');
+  }
+  function applyTpl(id) {
+    const tp = D.planTemplates.find(x => x.id === id); if (!tp) return;
+    const items = []; let uid = 1;
+    tp.days.forEach((d, di) => d.forEach(e => items.push({ uid: uid++, day: di + 1, kind: planKind(e.ref), ref: e.ref, time: e.time })));
+    S.plan = { days: tp.days.length, cur: 1, items: items, seq: uid }; save();
+    closeModal(); toast(t('plan_tpl_applied'), 'ok'); render();
+  }
+  function delPlanDay() {
+    const P = S.plan;
+    P.items = P.items.filter(i => i.day !== P.cur);
+    if (P.days > 1) { P.items.forEach(i => { if (i.day > P.cur) i.day--; }); P.days--; P.cur = Math.min(P.cur, P.days); }
+    save(); render();
   }
 
   /* ================= Flow 5: เดินทาง ================= */
@@ -381,7 +469,7 @@
       '<button class="btn coral block" data-act="go" data-to="ride">🛺 ' + t('call_ride') + '</button>';
   }
 
-  function spotOpts(selected) { return D.spots.filter(s => s.id !== 'waste').map(s => '<option value="' + s.id + '" ' + (s.id === selected ? 'selected' : '') + '>' + s.icon + ' ' + esc(L(s.name)) + '</option>').join(''); }
+  function spotOpts(selected) { return D.pins.filter(s => s.layer === 'history').map(s => '<option value="' + s.id + '" ' + (s.id === selected ? 'selected' : '') + '>' + s.icon + ' ' + esc(L(s.name)) + '</option>').join(''); }
   function pRide() {
     return '<div class="card"><label class="field"><span>📍 ' + t('ride_pick') + '</span><select data-change="pick">' + spotOpts(rideForm.pick) + '</select></label>' +
       '<label class="field"><span>🏁 ' + t('ride_drop') + '</span><select data-change="drop">' + spotOpts(rideForm.drop) + '</select></label>' +
@@ -400,7 +488,7 @@
     const step = Math.min(2, Math.floor((Date.now() - r.start) / 5000)), dr = r.driver;
     if (r.seen !== step) { r.seen = step; save(); toast(t('ride_t' + step), step === 2 ? 'ok' : '', 'remind'); }
     if (step < 2) afterFn = () => { timers.push(setInterval(() => { if (Math.min(2, Math.floor((Date.now() - r.start) / 5000)) !== step) render(); }, 1000)); };
-    const ps = D.spots.find(s => s.id === r.pick), ds = D.spots.find(s => s.id === r.drop);
+    const ps = D.pins.find(s => s.id === r.pick), ds = D.pins.find(s => s.id === r.drop);
     return '<div class="card"><div class="row"><div class="avatar">' + dr.emoji + '</div><div class="grow"><b style="font-size:17px">' + esc(S.lang === 'th' ? dr.name : dr.nameEn) + '</b><div class="muted">' + (r.type === 'tricycle' ? '🛺 ' + t('ride_tricycle') : '🏍️ ' + t('ride_moto')) + '</div><div class="muted">🔖 ' + t('plate') + ': <b>' + esc(dr.plate) + '</b></div></div>' +
       '<a class="btn sm" style="text-decoration:none" href="tel:' + dr.phone.replace(/[^0-9]/g, '') + '">📞 ' + t('call') + '</a></div><div class="muted mt">' + t('phone') + ': ' + dr.phone + '</div></div>' +
       '<div class="card"><div class="muted">📍 ' + esc(L(ps.name)) + ' → 🏁 ' + esc(L(ds.name)) + '</div><div class="steps mt">' +
@@ -460,16 +548,27 @@
       case 'closeModal': closeModal(); break;
       case 'closeModalBg': if (e.target === el) closeModal(); break;
       case 'sos': sosModal(); break;
-      case 'spot': spotModal(d.id); break;
       case 'pin': pinModal(d.id); break;
-      case 'checkin': doCheckin(d.kind, d.id); break;
+      case 'checkin': doCheckin(d.id); break;
+      case 'padd': addToPlan(d.kind, d.ref); closeModal(); if (route.name === 'plan') render(); break;
+      case 'pday': S.plan.cur = +d.v; save(); render(); break;
+      case 'paddday': if (S.plan.days < 3) { S.plan.days++; S.plan.cur = S.plan.days; save(); render(); } break;
+      case 'pdelday': delPlanDay(); break;
+      case 'pdel': S.plan.items = S.plan.items.filter(i => i.uid !== +d.uid); save(); render(); break;
+      case 'pclear': S.plan = { days: 1, cur: 1, items: [], seq: 1 }; save(); toast(t('plan_cleared'), ''); render(); break;
+      case 'popenadd': planAddModal(); break;
+      case 'ptplopen': planTplModal(); break;
+      case 'ptpl':
+        if (S.plan.items.length) { modalFn = null; openModal('<div class="grab"></div><h3>' + t('plan_replace_q') + '</h3><div class="row mt"><button class="btn ghost grow" data-act="closeModal">' + t('close') + '</button><button class="btn grow" data-act="ptplgo" data-id="' + d.id + '">' + t('ok') + '</button></div>'); }
+        else applyTpl(d.id);
+        break;
+      case 'ptplgo': applyTpl(d.id); break;
       case 'navigate': { const p = D.pins.find(x => x.id === d.id); toast(t('nav_started', { n: L(p.name) }), ''); break; }
       case 'mission': doMission(d.id); break;
       case 'redeem': doRedeem(d.id); break;
       case 'layer': mapLayer = d.v; render(); break;
-      case 'btab': bookTab = d.v; bookCat = 'all'; render(); break;
       case 'bcat': bookCat = d.v; render(); break;
-      case 'item': form = { id: d.id, date: ymd(), time: D.timeSlots[0], people: 1 }; go('detail', d.id); break;
+      case 'item': form = { id: d.id, date: ymd(), time: slotsOf(itemById(d.id))[0], people: 1 }; go('detail', d.id); break;
       case 'provider': go('provider', d.id); break;
       case 'people': form.people = Math.max(1, Math.min(20, form.people + (+d.v))); render(); break;
       case 'toCheckout':
@@ -500,13 +599,14 @@
     else if (k === 'pay') { payMethod = v; }
     else if (k === 'pick') { rideForm.pick = v; }
     else if (k === 'drop') { rideForm.drop = v; }
+    else if (k === 'ptime') { const it = S.plan.items.find(i => i.uid === +el.dataset.uid); if (it && v) { it.time = v; save(); render(); } }
   });
   document.addEventListener('keydown', e => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('pin')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
   });
 
   /* ---------- offline + ferry reminder ---------- */
-  try { localStorage.setItem('sichang_offline_cache', JSON.stringify({ savedAt: Date.now(), pins: D.pins, spots: D.spots, ferry: D.ferry, tide: D.tide })); } catch (e) { /* ignore */ }
+  try { localStorage.setItem('sichang_offline_cache', JSON.stringify({ savedAt: Date.now(), pins: D.pins, ferry: D.ferry, tide: D.tide })); } catch (e) { /* ignore */ }
   function updateOffline() { offEl.textContent = t('offline'); offEl.hidden = navigator.onLine !== false; }
   window.addEventListener('online', updateOffline);
   window.addEventListener('offline', updateOffline);

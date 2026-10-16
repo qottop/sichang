@@ -97,7 +97,7 @@ button{cursor:pointer}
 .hero{border-radius:20px;padding:14px 16px;margin-bottom:12px;color:#fff;background:linear-gradient(135deg,var(--deep),var(--sea));display:flex;justify-content:space-between;align-items:center}
 .hero h2{margin:0;font-size:18px}.hero p{margin:2px 0 0;opacity:.9;font-size:13px}
 .hero .pts{background:rgba(255,255,255,.22);border-radius:16px;padding:6px 12px;font-weight:800;font-size:17px}
-.quick{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}
+.quick{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .quick button{border:0;background:#fff;border-radius:16px;padding:10px 4px;font-weight:700;color:var(--deep);box-shadow:0 2px 8px rgba(11,110,153,.12);display:flex;flex-direction:column;align-items:center;gap:2px}
 .quick button span{font-size:26px}
 .mapcard{border-radius:22px;overflow:hidden;box-shadow:0 6px 20px rgba(11,110,153,.25);border:3px solid #fff;margin-bottom:8px}
@@ -154,3 +154,19 @@ svg.island{display:block;width:100%;height:auto}
 .times span.past{opacity:.4;text-decoration:line-through}
 .times span.nx{background:var(--coral);color:#fff}
 .tide{width:100%;height:auto;display:block}
+
+/* v2: แผนที่จริง + แพลนเที่ยว */
+.quick button{font-size:12.5px;padding:10px 2px}
+.quick button span{font-size:24px}
+.isl-l{font-size:9.5px;font-weight:700;fill:#0b4a6f;stroke:#fff;stroke-width:2.6px;paint-order:stroke;stroke-linejoin:round}
+.map-note{font-size:9.5px;fill:#fff;opacity:.9}
+.pin .pl{font-size:10.5px}
+.pin.num .pb{fill:var(--coral);stroke:#fff}
+.pin.num .pi{fill:#fff;font-size:15px;font-weight:800}
+.daytabs{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px}
+.pitem{display:flex;gap:10px;align-items:center;background:#fff;border-radius:16px;padding:10px;margin-bottom:8px;box-shadow:0 2px 8px rgba(11,110,153,.1)}
+.pitem .no{width:26px;height:26px;border-radius:50%;background:var(--coral);color:#fff;font-weight:800;display:grid;place-items:center;flex:none;font-size:13px}
+.pitem input[type=time]{border:1.5px solid var(--line);border-radius:10px;padding:5px 4px;width:122px;font-size:13.5px;background:#fff}
+.xbtn{border:0;background:#fdecea;color:var(--red);width:32px;height:32px;border-radius:50%;font-weight:800;flex:none}
+.item:disabled{opacity:.55;cursor:default}
+.hero .pts{white-space:nowrap;flex:none;margin-left:8px}
