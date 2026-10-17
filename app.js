@@ -9,7 +9,7 @@
 
   /* ---------- state ---------- */
   function defaults() {
-    return { user: null, lang: 'th', notif: true, points: 0, log: [], checkins: {}, missions: {}, redeemed: [], bookings: [], ride: null, seq: 1, plan: { days: 1, cur: 1, items: [], seq: 1 }, waste: { date: '', count: 0, hashes: [], stats: { general: 0, recycle: 0, organic: 0, hazardous: 0 } }, chat: { msgs: [], prefs: { days: null, styles: null, squid: null, hire: null }, done: false } };
+    return { user: null, lang: 'th', notif: true, points: 0, log: [], checkins: {}, missions: {}, redeemed: [], bookings: [], ride: null, seq: 1, plan: { days: 1, cur: 1, items: [], seq: 1 }, demo: false, waste: { date: '', count: 0, hashes: [], stats: { general: 0, recycle: 0, organic: 0, hazardous: 0 } }, chat: { msgs: [], prefs: { days: null, styles: null, squid: null, hire: null }, done: false } };
   }
   function load() { try { return Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { return defaults(); } }
   let S = load();
@@ -143,6 +143,7 @@
   /* ---------- render ---------- */
   function render() {
     clearTimers(); afterFn = null;
+    if (route.name !== 'scan') stopCam();
     if (!S.user && route.name !== 'login') { route = { name: 'login' }; stack = []; }
     advanceBookings();
     document.documentElement.lang = S.lang;
@@ -171,15 +172,22 @@
       '<div class="mapcard">' + islandSVG(pins) + '</div>' +
       '<p class="muted center">👆 ' + t('tap_hint') + '</p>';
   }
-  function doCheckin(id) {
-    const p = pinById(id);
-    if (!p) return;
-    const key = 'p_' + id + '|' + ymd();
-    if (S.checkins[key]) return;
-    S.checkins[key] = true;
-    addPoints(D.checkinPoints, p.layer === 'waste' ? 'waste' : 'checkin', L(p.name));
-    toast(t('checkin_ok', { n: D.checkinPoints }), 'ok');
-    render(); if (modalFn) modalFn();
+  const codeOf = p => p.code || ('SICHANG-' + p.id.toUpperCase());
+  const pinByCode = c => { c = String(c || '').trim().toUpperCase(); return D.pins.find(p => codeOf(p).toUpperCase() === c); };
+  const unlocked = id => !!S.checkins['u_' + id + '|' + ymd()];
+  function targetsOf(m) { return m.target === 'waste' ? [] : [].concat(m.target || []); }
+  function missionWhere(m) {
+    if (m.target === 'waste') return t('mission_scan_hint');
+    const ts = targetsOf(m);
+    return t('mission_where', { w: ts.length > 1 ? t('mission_anyfood') : L(pinById(ts[0]).name) });
+  }
+  /* เช็กอินด้วย QR ที่จุดจริง: ได้แต้มครั้งเดียว/จุด/วัน + ภารกิจที่ผูกกับจุดนั้น */
+  function scanCheckin(p) {
+    const key = 'p_' + p.id + '|' + ymd();
+    let pts = 0;
+    if (!S.checkins[key]) { S.checkins[key] = true; pts = D.checkinPoints; addPoints(pts, 'checkin', L(p.name) + ' (QR)'); }
+    D.missions.forEach(m => { if (!S.missions[m.id] && targetsOf(m).indexOf(p.id) >= 0) doMission(m.id, true); });
+    return pts;
   }
 
   function pMissions() {
@@ -189,14 +197,15 @@
       '<p class="muted mt">' + (done === total ? t('mission_all') : t('mission_hint')) + ' · ' + t('mission_bonus', { n: D.missionBonus }) + '</p></div>' +
       D.missions.map(m => {
         const on = !!S.missions[m.id];
-        if (m.auto && !on) return '<div class="mission"><span class="check"></span><span class="grow">' + esc(L(m.title)) + '<div class="muted">' + t('mission_scan_hint') + '</div></span><button class="btn sm" data-act="go" data-to="scan">' + t('go_scan') + '</button></div>';
-        return '<button class="mission ' + (on ? 'done' : '') + '" data-act="mission" data-id="' + m.id + '"><span class="check ' + (on ? 'on' : '') + '">' + (on ? '✓' : '') + '</span><span class="grow">' + esc(L(m.title)) + '</span><b class="price">+' + m.points + '</b></button>';
+        const ts = targetsOf(m);
+        return '<div class="mission ' + (on ? 'done' : '') + '"><span class="check ' + (on ? 'on' : '') + '">' + (on ? '✓' : '') + '</span><span class="grow">' + esc(L(m.title)) + '<div class="muted">' + (on ? '✅ +' + m.points : esc(missionWhere(m))) + '</div></span>' +
+          (on ? '' : '<button class="btn sm" data-act="scanfor" data-id="' + (ts.length === 1 ? ts[0] : '') + '">' + t('go_scan') + '</button>') + '</div>';
       }).join('');
   }
   function doMission(id, force) {
     const m = D.missions.find(x => x.id === id);
     if (!m || S.missions[id]) return;
-    if (m.auto && !force) { go('scan'); return; }
+    if (!force) { go('scan', targetsOf(m).length === 1 ? targetsOf(m)[0] : undefined); return; }
     S.missions[id] = true; save();
     addPoints(m.points, 'mission', L(m.title));
     toast(t('mission_get', { n: m.points }), 'ok');
@@ -259,8 +268,8 @@
     else if (p.layer === 'history') body = '<p>📖 <b>' + t('story') + ':</b> ' + esc(L(p.story)) + '</p>';
     else body = '<p>🗑️ <b>' + t('bin_types') + ':</b> ' + esc(L(p.bins)) + '</p><p>' + wasteChips(p) + '</p><p class="muted">📷 ' + t('waste_pts_rule') + '</p>';
     const main = p.layer === 'waste'
-      ? (done ? '<button class="btn block mt" data-act="gdispose" data-id="' + id + '">📷 ' + t('waste_go_photo') + '</button>' : '<button class="btn block mt" data-act="gscan">📷 ' + t('scan_qr_here') + '</button>')
-      : '<button class="btn block mt" data-act="checkin" data-id="' + id + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓ ' + t('checked') : '📍 ' + t('checkin')) + '</button>';
+      ? (unlocked(id) ? '<button class="btn block mt" data-act="gdispose" data-id="' + id + '">📷 ' + t('waste_go_photo') + '</button>' : '<button class="btn block mt" data-act="gscan" data-id="' + id + '">📷 ' + t('scan_qr_here') + '</button>')
+      : (done ? '<button class="btn block mt" disabled>✓ ' + t('checked') + '</button>' : '<button class="btn block mt" data-act="gscan" data-id="' + id + '">📷 ' + t('checkin') + '</button>');
     openModal('<div class="grab"></div><div class="row"><div class="thumb">' + p.icon + '</div><div class="grow"><h3>' + esc(L(p.name)) + '</h3><div class="muted">' + t('layer_' + p.layer) + ' · ' + t('checkin_rule', { n: D.checkinPoints }) + '</div></div></div>' + body +
       '<div class="row mt"><button class="btn ghost grow" data-act="navigate" data-id="' + id + '">🧭 ' + t('navigate') + '</button>' +
       '<button class="btn ghost grow" data-act="padd" data-kind="pin" data-ref="' + id + '">🗓️ ' + t('plan_from_pin') + '</button></div>' +
@@ -660,31 +669,109 @@
   const freshDz = () => ({ img: null, busy: false, res: null, demo: (typeof dz !== 'undefined' && dz && dz.demo) || 'auto' });
   let dz = { img: null, busy: false, res: null, demo: 'auto' };
 
-  function doScan(code) {
-    code = String(code || '').trim().toUpperCase();
-    const p = wastePins().find(x => x.code === code);
+  /* ---------- สแกน QR (กล้องจริง) ---------- */
+  let scanRes = null, camMsg = '';
+  const cam = { stream: null, timer: null, det: null, last: '', lastT: 0, busy: false, jq: null };
+  function setCamMsg(m) { camMsg = m; const e = $('#cammsg'); if (e) e.textContent = m; }
+  function stopCam() {
+    if (cam.timer) { clearInterval(cam.timer); cam.timer = null; }
+    if (cam.stream) { cam.stream.getTracks().forEach(tr => tr.stop()); cam.stream = null; }
+  }
+  function loadJsQR() {
+    if (window.jsQR) return Promise.resolve(window.jsQR);
+    if (!cam.jq) cam.jq = new Promise(res => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js';
+      s.onload = () => res(window.jsQR || null); s.onerror = () => { cam.jq = null; res(null); };
+      document.head.appendChild(s);
+    });
+    return cam.jq;
+  }
+  /* อ่าน QR จาก video/canvas: ใช้ BarcodeDetector ของเบราว์เซอร์ก่อน ถ้าไม่มีใช้ jsQR */
+  async function decodeSource(el, w, h) {
+    if ('BarcodeDetector' in window) {
+      try { cam.det = cam.det || new BarcodeDetector({ formats: ['qr_code'] }); const r = await cam.det.detect(el); if (r.length) return r[0].rawValue; } catch (e) { /* ใช้ jsQR ต่อ */ }
+    }
+    const jq = await loadJsQR();
+    if (!jq) { setCamMsg(t('no_decoder')); return null; }
+    const c = decodeSource.c || (decodeSource.c = document.createElement('canvas'));
+    c.width = w; c.height = h;
+    const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(el, 0, 0, w, h);
+    const im = x.getImageData(0, 0, w, h), r = jq(im.data, w, h);
+    return r ? r.data : null;
+  }
+  async function camTick() {
+    if (cam.busy || route.name !== 'scan') return;
+    const v = $('#cam'); if (!v || !v.videoWidth) return;
+    cam.busy = true;
+    try {
+      const w = Math.min(640, v.videoWidth), h = Math.round(v.videoHeight * w / v.videoWidth);
+      const code = await decodeSource(v, w, h);
+      if (code) { const now = Date.now(); if (code !== cam.last || now - cam.lastT > 3000) { cam.last = code; cam.lastT = now; handleScan(code, route.arg); } }
+    } finally { cam.busy = false; }
+  }
+  function startCam() {
+    const v = $('#cam'); if (!v) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setCamMsg(t('cam_unsupported')); return; }
+    setCamMsg(t('cam_scanning'));
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false }).then(st => {
+      if (route.name !== 'scan') { st.getTracks().forEach(tr => tr.stop()); return; }
+      cam.stream = st; const vv = $('#cam'); if (vv) { vv.srcObject = st; vv.play().catch(() => {}); }
+      cam.timer = setInterval(camTick, 300);
+    }).catch(() => setCamMsg(t('cam_denied')));
+  }
+  function attachCam() {
+    const v = $('#cam'); if (!v) return;
+    if (cam.stream) { v.srcObject = cam.stream; v.play().catch(() => {}); } else startCam();
+  }
+  function scanPhoto(file) {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onerror = () => { URL.revokeObjectURL(url); toast(t('scan_bad_img'), 'err'); };
+    im.onload = () => {
+      const k = Math.min(1, 1000 / Math.max(im.width, im.height)), w = Math.max(1, Math.round(im.width * k)), h = Math.max(1, Math.round(im.height * k));
+      const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(im, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      decodeSource(c, w, h).then(code => { if (code) handleScan(code, route.arg); else toast(t('scan_bad_img'), 'err'); });
+    };
+    im.src = url;
+  }
+
+  /* ประมวลผล QR ที่สแกนได้ (expect = จุดที่ผู้ใช้กำลังจะสแกน ถ้ามี) */
+  function handleScan(raw, expect) {
+    const p = pinByCode(raw);
     if (!p) { toast(t('scan_bad'), 'err'); return; }
-    const key = 'p_' + p.id + '|' + ymd();
-    if (!S.checkins[key]) {
-      S.checkins[key] = true;
-      addPoints(D.checkinPoints, 'waste', L(p.name) + ' (QR)');
-      toast(t('scan_ok', { n: D.checkinPoints }), 'ok');
-      const m = D.missions.find(x => x.auto === 'scan');
-      if (m && !S.missions[m.id]) doMission(m.id, true);
-    } else toast(t('scan_again'), '');
-    dz = freshDz();
-    go('dispose', p.id);
+    if (expect && p.id !== expect) { toast(t('scan_wrong', { n: L(pinById(expect).name) }), 'warn'); return; }
+    if (p.layer === 'waste') {
+      S.checkins['u_' + p.id + '|' + ymd()] = true; save();
+      toast(t('scan_unlock'), 'ok');
+      dz = freshDz(); go('dispose', p.id);
+      return;
+    }
+    const pts = scanCheckin(p);
+    scanRes = { name: L(p.name), pts: pts };
+    toast(pts ? t('scan_ok', { w: L(p.name), n: pts }) : t('scan_again'), pts ? 'ok' : '');
+    render();
+  }
+  function demoScanHTML() {
+    if (!S.demo) return '';
+    return '<div class="card"><b>🧪 ' + t('demo_mode') + '</b><div class="muted">' + t('demo_pick') + '</div><div class="row mt"><select id="demopin" style="flex:1;min-width:0;padding:10px;border-radius:12px;border:1.5px solid var(--line)">' +
+      D.pins.map(p => '<option value="' + esc(codeOf(p)) + '"' + (p.id === route.arg ? ' selected' : '') + '>' + p.icon + ' ' + esc(L(p.name)) + '</option>').join('') +
+      '</select><button class="btn sm" data-act="demoscan">' + t('scan_sim') + '</button></div></div>';
   }
   function pScan() {
+    afterFn = attachCam;
+    const exp = route.arg && pinById(route.arg);
     const rows = wastePins().map(p => {
-      const done = pinDone(p.id);
-      return '<div class="item" style="cursor:default"><div class="thumb" style="width:48px;height:48px;font-size:24px">' + p.icon + '</div><div class="grow"><b>' + esc(L(p.name)) + '</b><div class="muted">' + esc(p.code) + (done ? ' · ✅ ' + t('scan_done_today') : '') + '</div></div>' +
-        (done ? '<button class="btn sm" data-act="gdispose" data-id="' + p.id + '" aria-label="photo">📷</button>' : '') +
-        '<button class="btn sm ghost" data-act="scanqr" data-code="' + esc(p.code) + '">' + t('scan_sim') + '</button></div>';
+      const un = unlocked(p.id);
+      return '<div class="item" style="cursor:default"><div class="thumb" style="width:44px;height:44px;font-size:22px">' + p.icon + '</div><div class="grow"><b>' + esc(L(p.name)) + '</b><div class="muted">' + (un ? '✅ ' + t('scan_done_today') : '🔒 ' + codeOf(p)) + '</div></div>' +
+        (un ? '<button class="btn sm" data-act="gdispose" data-id="' + p.id + '" aria-label="photo">📷</button>' : '') + '</div>';
     }).join('');
-    return '<div class="scanbox"><i class="cr tl"></i><i class="cr tr"></i><i class="cr bl"></i><i class="cr br"></i><div class="scanline"></div><div class="qrfake">▦</div></div>' +
-      '<p class="center" style="margin:10px 0 2px"><b>' + t('scan_hint') + '</b></p><p class="muted center" style="margin:0 0 12px">' + t('scan_proto') + '</p>' +
-      '<div class="card"><div class="row"><input id="qrin" type="text" autocomplete="off" placeholder="' + esc(t('scan_code_ph')) + '" style="flex:1;min-width:0;padding:11px 12px;border:1.5px solid var(--line);border-radius:12px"><button class="btn" data-act="scancode">' + t('scan_confirm') + '</button></div></div>' +
+    return '<div class="camwrap"><video id="cam" playsinline muted autoplay></video><i class="cr tl"></i><i class="cr tr"></i><i class="cr bl"></i><i class="cr br"></i><div class="scanline"></div></div>' +
+      '<p class="center" id="cammsg" style="margin:8px 0 2px">' + esc(camMsg || t('cam_scanning')) + '</p>' +
+      '<p class="muted center" style="margin:0 0 10px">' + (exp ? '📍 ' + t('scan_expect') + ': <b>' + esc(L(exp.name)) + '</b>' : t('scan_hint')) + ' · ' + t('scan_proto') + '</p>' +
+      (scanRes ? '<div class="okbox">✅ ' + esc(scanRes.name) + (scanRes.pts ? ' +' + scanRes.pts + ' ' + t('pts') : ' · ' + t('scan_again')) + '</div>' : '') +
+      '<label class="btn ghost block" style="text-align:center"><input type="file" accept="image/*" data-change="qrphoto" hidden>' + t('scan_from_photo') + '</label>' +
+      demoScanHTML() +
       '<h3 style="margin:14px 0 8px">♻️ ' + t('scan_points') + '</h3>' + rows;
   }
 
@@ -766,7 +853,7 @@
   }
   function pDispose() {
     const p = pinById(route.arg);
-    if (!p || p.layer !== 'waste' || !pinDone(p.id)) return '<div class="card center"><p>' + t('need_scan') + '</p><button class="btn" data-act="go" data-to="scan">' + t('go_scan') + '</button></div>';
+    if (!p || p.layer !== 'waste' || !unlocked(p.id)) return '<div class="card center"><p>' + t('need_scan') + '</p><button class="btn" data-act="go" data-to="scan">' + t('go_scan') + '</button></div>';
     const W = wasteToday(), left = D.wasteDailyCap - W.count;
     let body;
     if (dz.busy) body = (dz.img ? '<img class="wimg" src="' + dz.img + '" alt="">' : '') + '<div class="card center"><div class="typing" style="justify-content:center"><i></i><i></i><i></i></div><p class="muted">' + t('ai_checking') + '</p></div>';
@@ -784,7 +871,10 @@
     const ty = D.wasteTypes[r.type], nm = (r.name && typeof r.name === 'object') ? L(r.name) : String(r.name || '');
     W.count++; W.hashes.push(r.hash); W.stats[r.type] = (W.stats[r.type] || 0) + 1;
     addPoints(ty.points, 'waste', nm + ' → ' + L(ty.name).replace(/\s*[(（].*$/, ''));
+    S.checkins['p_' + p.id + '|' + ymd()] = true; save();
     toast(t('claim_ok', { n: ty.points }), 'ok');
+    const wm = D.missions.find(x => x.target === 'waste');
+    if (wm && !S.missions[wm.id]) doMission(wm.id, true);
     dz = freshDz(); render();
   }
 
@@ -884,6 +974,7 @@
       '<button class="item" data-act="go" data-to="points"><div class="thumb">⭐</div><div class="grow"><b>' + t('my_points') + '</b><div class="price">' + S.points + ' ' + t('pts') + '</div></div><span>›</span></button>' +
       '<div class="card"><h3>🌐 ' + t('lang_label') + '</h3><div class="seg" style="margin:0"><button class="' + (S.lang === 'th' ? 'on' : '') + '" data-act="lang" data-v="th">🇹🇭 ไทย</button><button class="' + (S.lang === 'en' ? 'on' : '') + '" data-act="lang" data-v="en">🇬🇧 English</button></div></div>' +
       '<div class="card"><h3>🔔 ' + t('notif') + '</h3><div class="seg" style="margin:0"><button class="' + (S.notif ? 'on' : '') + '" data-act="notif" data-v="1">' + t('notif_on') + '</button><button class="' + (!S.notif ? 'on' : '') + '" data-act="notif" data-v="0">' + t('notif_off') + '</button></div></div>' +
+      '<div class="card"><h3>🧪 ' + t('demo_mode') + '</h3><p class="muted" style="margin-top:0">' + t('demo_mode_desc') + '</p><div class="seg" style="margin:0"><button class="' + (S.demo ? 'on' : '') + '" data-act="demo" data-v="1">' + t('demo_on') + '</button><button class="' + (!S.demo ? 'on' : '') + '" data-act="demo" data-v="0">' + t('demo_off') + '</button></div></div>' +
       '<div class="card"><h3>🎫 ' + t('booking_hist') + '</h3>' +
       (S.bookings.length ? S.bookings.map(b => { const it = itemById(b.itemId); return '<button class="item" style="box-shadow:none;background:#f2fbfe" data-act="status" data-id="' + b.id + '"><div class="thumb" style="width:46px;height:46px;font-size:24px">' + it.emoji + '</div><div class="grow"><b>' + esc(L(it.name)) + '</b><div class="muted">' + b.date + ' · ' + b.time + '</div></div><span class="badge ' + b.status + '">' + t({ pending: 'st_pending', confirmed: 'st_confirmed', done: 'st_done' }[b.status]) + '</span></button>'; }).join('') : '<p class="muted">' + t('no_booking') + '</p>') + '</div>' +
       '<button class="btn danger block" data-act="logout">🚪 ' + t('logout') + '</button>';
@@ -911,7 +1002,6 @@
       case 'closeModalBg': if (e.target === el) closeModal(); break;
       case 'sos': sosModal(); break;
       case 'pin': pinModal(d.id); break;
-      case 'checkin': doCheckin(d.id); break;
       case 'padd': addToPlan(d.kind, d.ref); closeModal(); if (route.name === 'plan') render(); break;
       case 'pday': S.plan.cur = +d.v; save(); render(); break;
       case 'paddday': if (S.plan.days < 3) { S.plan.days++; S.plan.cur = S.plan.days; save(); render(); } break;
@@ -942,10 +1032,11 @@
       case 'ptab': planTab = d.v; render(); break;
       case 'chip': inputFocus = false; sendChat(d.text); break;
       case 'chatsend': { const el = $('#chatin'); inputFocus = true; sendChat(el ? el.value : ''); break; }
-      case 'gscan': closeModal(); go('scan'); break;
+      case 'gscan': closeModal(); go('scan', d.id || undefined); break;
+      case 'scanfor': go('scan', d.id || undefined); break;
+      case 'demoscan': { const el = $('#demopin'); if (el) handleScan(el.value, route.arg); break; }
+      case 'demo': S.demo = d.v === '1'; save(); render(); break;
       case 'gdispose': closeModal(); dz = freshDz(); go('dispose', d.id); break;
-      case 'scanqr': doScan(d.code); break;
-      case 'scancode': { const el = $('#qrin'); doScan(el ? el.value : ''); break; }
       case 'wclaim': doWasteClaim(); break;
       case 'wretake': dz = freshDz(); render(); break;
       case 'fdir': ferryDir = d.v; render(); break;
@@ -970,6 +1061,7 @@
     else if (k === 'pay') { payMethod = v; }
     else if (k === 'pick') { rideForm.pick = v; }
     else if (k === 'drop') { rideForm.drop = v; }
+    else if (k === 'qrphoto') { const f = el.files && el.files[0]; if (f) scanPhoto(f); }
     else if (k === 'wphoto') { const f = el.files && el.files[0]; if (f) analyzePhoto(f); }
     else if (k === 'demoai') { dz.demo = v; }
     else if (k === 'ptime') { const it = S.plan.items.find(i => i.uid === +el.dataset.uid); if (it && v) { it.time = v; save(); render(); } }
