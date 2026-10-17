@@ -29,7 +29,7 @@ button{cursor:pointer}
 .view{flex:1;overflow-y:auto;padding:14px 14px 96px;scroll-behavior:smooth}
 
 /* nav */
-.nav{display:grid;grid-template-columns:repeat(5,1fr);background:#fff;border-top:1px solid var(--line);padding:4px 4px calc(4px + env(safe-area-inset-bottom));z-index:5}
+.nav{display:grid;grid-template-columns:repeat(6,1fr);background:#fff;border-top:1px solid var(--line);padding:4px 4px calc(4px + env(safe-area-inset-bottom));z-index:5}
 .nav[hidden]{display:none}
 .nav button{border:0;background:transparent;display:flex;flex-direction:column;align-items:center;gap:0;padding:5px 0;border-radius:12px;color:var(--mute)}
 .nav .ni{font-size:21px;filter:grayscale(.7)}
@@ -170,3 +170,68 @@ svg.island{display:block;width:100%;height:auto}
 .xbtn{border:0;background:#fdecea;color:var(--red);width:32px;height:32px;border-radius:50%;font-weight:800;flex:none}
 .item:disabled{opacity:.55;cursor:default}
 .hero .pts{white-space:nowrap;flex:none;margin-left:8px}
+
+/* v3: แชทบอทวางแผน */
+.view.chatmode{display:flex;flex-direction:column;overflow:hidden;padding-bottom:8px}
+.chatwrap{flex:1;min-height:0;display:flex;flex-direction:column}
+.msgs{flex:1;min-height:0;overflow-y:auto;padding:4px 2px 8px;display:flex;flex-direction:column;gap:10px}
+.msg{display:flex;gap:8px;align-items:flex-end;max-width:94%}
+.msg.me{align-self:flex-end;justify-content:flex-end}
+.msg.bot{align-self:flex-start}
+.bav{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#bdeefa,#7fdcf0);display:grid;place-items:center;flex:none;font-size:17px}
+.bub{padding:10px 12px;border-radius:16px;line-height:1.45;white-space:pre-line;word-break:break-word;box-shadow:0 1px 5px rgba(11,110,153,.12)}
+.msg.bot .bub{background:#fff;border-bottom-left-radius:4px}
+.msg.me .bub{background:linear-gradient(135deg,var(--sea),var(--deep));color:#fff;border-bottom-right-radius:4px}
+.cchips{display:flex;gap:8px;overflow-x:auto;padding:6px 0 6px;flex:none}
+.cchips .chip{flex:none}
+.chatin{display:flex;gap:8px;flex:none}
+.chatin input{flex:1;min-width:0;padding:11px 14px;border:1.5px solid var(--line);border-radius:24px;background:#fff}
+.chatin input:focus{outline:2px solid var(--sea);border-color:var(--sea)}
+.chatin .btn{border-radius:50%;width:46px;height:46px;padding:0;flex:none}
+.typing{display:flex;gap:4px;padding:14px 16px}
+.typing i{width:7px;height:7px;border-radius:50%;background:#9ab8c4;animation:blink 1.2s infinite}
+.typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,60%,100%{opacity:.3}30%{opacity:1}}
+.plancard{margin-top:8px;background:var(--foam);border-radius:12px;padding:8px 10px;white-space:normal}
+.cday{margin-bottom:8px}
+.crow{display:flex;gap:8px;font-size:13.5px;padding:2px 0}
+.ct{font-weight:800;color:var(--deep);min-width:44px}
+.planseg{flex:none}
+.app.chatmode .sos{top:62px;right:10px;bottom:auto;width:40px;height:40px;font-size:18px;animation:none}
+.view.chatmode .planseg{margin-right:46px}
+
+/* v4: ทิ้งขยะ + QR + AI */
+.wastebanner{display:flex;align-items:center;gap:12px;width:100%;border:0;text-align:left;color:#fff;border-radius:18px;padding:12px 14px;margin-bottom:12px;background:linear-gradient(135deg,#16a34a,#0d9488);box-shadow:0 4px 12px rgba(22,163,74,.35)}
+.wastebanner b{display:block;font-size:15px}
+.wb-i{font-size:30px}.wb-s{display:block;font-size:12.5px;opacity:.92}
+.scanbox{position:relative;width:230px;height:230px;margin:6px auto;border-radius:20px;background:linear-gradient(135deg,#0b3a52,#0b6e99);overflow:hidden;display:grid;place-items:center}
+.qrfake{font-size:120px;color:rgba(255,255,255,.35);line-height:1}
+.scanline{position:absolute;left:12px;right:12px;height:3px;background:#34d399;box-shadow:0 0 12px #34d399;animation:scanmove 2.2s ease-in-out infinite}
+@keyframes scanmove{0%,100%{top:14px}50%{top:212px}}
+.cr{position:absolute;width:30px;height:30px;border:4px solid #fff;border-radius:6px}
+.cr.tl{top:10px;left:10px;border-right:0;border-bottom:0}.cr.tr{top:10px;right:10px;border-left:0;border-bottom:0}
+.cr.bl{bottom:10px;left:10px;border-right:0;border-top:0}.cr.br{bottom:10px;right:10px;border-left:0;border-top:0}
+.wchip{display:inline-block;color:#fff;border-radius:12px;padding:2px 10px;font-size:12.5px;font-weight:700;margin:2px 4px 2px 0}
+.wimg{display:block;width:100%;max-height:260px;object-fit:cover;border-radius:16px;margin-bottom:10px}
+.okbox{background:#e8f9ee;border:1.5px solid #86d9a3;color:#15803d;border-radius:14px;padding:10px 12px;font-size:13.5px;margin-bottom:12px}
+details summary{cursor:pointer}
+
+.nav .scantab{position:relative}
+.nav .scantab{}
+.nav button.scantab .ni{display:grid;place-items:center;width:46px;height:46px;margin-top:-20px;border-radius:50%;background:linear-gradient(135deg,#16a34a,#0d9488);color:#fff;font-size:24px;filter:none;box-shadow:0 4px 10px rgba(22,163,74,.45);border:3px solid #fff}
+.nav button.scantab,.nav button.scantab.on{background:transparent}
+.nav button.scantab.on .nl{color:#16a34a}
+
+/* v5: แถบเมนูใหม่ (สแกนอยู่กลาง) */
+.gear{border:0;background:rgba(255,255,255,.2);color:#fff;width:34px;height:34px;border-radius:50%;font-size:17px;display:grid;place-items:center;padding:0;flex:none}
+.gear.on{background:#fff}
+.nav{grid-template-columns:repeat(5,1fr);align-items:end;position:relative;border-top:0;border-radius:22px 22px 0 0;padding:6px 8px calc(6px + env(safe-area-inset-bottom));box-shadow:0 -6px 20px rgba(11,58,82,.12)}
+.nav button{position:relative;background:transparent!important;padding:6px 0 4px;gap:2px;border-radius:14px;transition:color .15s}
+.nav .ni{font-size:22px;transition:transform .15s}
+.nav button.on{color:var(--deep)}
+.nav button.on .ni{transform:translateY(-2px)}
+.nav button:not(.scantab).on::after{content:"";position:absolute;top:-6px;left:50%;width:22px;height:4px;margin-left:-11px;border-radius:0 0 4px 4px;background:linear-gradient(90deg,var(--sea),var(--deep))}
+.nav button.scantab{background:transparent!important;color:#15803d}
+.nav button.scantab .ni{width:58px;height:58px;margin-top:-30px;border:4px solid #fff;box-shadow:0 6px 16px rgba(22,163,74,.5);background:linear-gradient(135deg,#22c55e,#0d9488);transform:none}
+.nav button.scantab:active .ni{transform:scale(.94)}
+.nav button.scantab .nl{font-weight:700}

@@ -9,14 +9,14 @@
 
   /* ---------- state ---------- */
   function defaults() {
-    return { user: null, lang: 'th', notif: true, points: 0, log: [], checkins: {}, missions: {}, redeemed: [], bookings: [], ride: null, seq: 1, plan: { days: 1, cur: 1, items: [], seq: 1 } };
+    return { user: null, lang: 'th', notif: true, points: 0, log: [], checkins: {}, missions: {}, redeemed: [], bookings: [], ride: null, seq: 1, plan: { days: 1, cur: 1, items: [], seq: 1 }, waste: { date: '', count: 0, hashes: [], stats: { general: 0, recycle: 0, organic: 0, hazardous: 0 } }, chat: { msgs: [], prefs: { days: null, styles: null, squid: null, hire: null }, done: false } };
   }
   function load() { try { return Object.assign(defaults(), JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) { return defaults(); } }
   let S = load();
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignore */ } }
 
   let route = { name: 'home' }, stack = [], afterFn = null, timers = [], modalFn = null, lastKey = '';
-  let mapLayer = 'history', bookCat = 'all', bookPrice = 'all';
+  let mapLayer = 'history', bookCat = 'all', bookPrice = 'all', planTab = 'chat';
   let form = null, draft = null, payMethod = 'promptpay', ferryDir = 'in', authMode = 'login';
   let rideForm = { pick: 'pier', drop: 'thamphang', type: 'tricycle' };
 
@@ -114,7 +114,7 @@
   function mapPin(p) { return pin(p.x, p.y, p.icon, L(p.short || p.name), 'pin', p.id, pinDone(p.id), p.side); }
 
   /* ---------- navigation ---------- */
-  const TAB_OF = { home: 'home', missions: 'home', plan: 'home', points: 'home', rewards: 'home', maps: 'maps', book: 'book', detail: 'book', checkout: 'book', status: 'book', provider: 'book', travel: 'travel', ride: 'travel', driver: 'travel', settings: 'settings' };
+  const TAB_OF = { home: 'home', missions: 'home', plan: 'home', scan: 'scan', dispose: 'scan', points: 'home', rewards: 'home', maps: 'maps', book: 'book', detail: 'book', checkout: 'book', status: 'book', provider: 'book', travel: 'travel', ride: 'travel', driver: 'travel', settings: 'settings' };
   function go(name, arg, replace) { if (!replace) stack.push(route); route = { name: name, arg: arg }; render(); }
   function goTab(name) { stack = []; route = { name: name }; render(); }
   function back() { route = stack.pop() || { name: 'home' }; render(); }
@@ -123,7 +123,7 @@
     const showBack = stack.length > 0 && route.name !== 'login';
     topEl.innerHTML = (showBack ? '<button class="back" data-act="back" aria-label="' + t('back') + '">‹</button>' : '<span class="logo">🏝️</span>') +
       '<h1>' + esc(t('title_' + route.name)) + '</h1>' +
-      '<div class="langseg"><button data-act="lang" data-v="th" class="' + (S.lang === 'th' ? 'on' : '') + '">ไทย</button><button data-act="lang" data-v="en" class="' + (S.lang === 'en' ? 'on' : '') + '">EN</button></div>';
+      '<div class="langseg"><button data-act="lang" data-v="th" class="' + (S.lang === 'th' ? 'on' : '') + '">ไทย</button><button data-act="lang" data-v="en" class="' + (S.lang === 'en' ? 'on' : '') + '">EN</button></div><button class="gear' + (route.name === 'settings' ? ' on' : '') + '" data-act="tab" data-to="settings" aria-label="' + t('tab_settings') + '">⚙️</button>';
   }
   function renderNav() {
     navEl.hidden = route.name === 'login';
@@ -146,9 +146,11 @@
     if (!S.user && route.name !== 'login') { route = { name: 'login' }; stack = []; }
     advanceBookings();
     document.documentElement.lang = S.lang;
-    const pages = { login: pLogin, home: pHome, plan: pPlan, missions: pMissions, points: pPoints, rewards: pRewards, maps: pMaps, book: pBook, detail: pDetail, checkout: pCheckout, status: pStatus, provider: pProvider, travel: pTravel, ride: pRide, driver: pDriver, settings: pSettings };
+    const pages = { login: pLogin, home: pHome, plan: pPlan, scan: pScan, dispose: pDispose, missions: pMissions, points: pPoints, rewards: pRewards, maps: pMaps, book: pBook, detail: pDetail, checkout: pCheckout, status: pStatus, provider: pProvider, travel: pTravel, ride: pRide, driver: pDriver, settings: pSettings };
     const html = (pages[route.name] || pHome)();
     view.innerHTML = html;
+    const cm = route.name === 'plan' && planTab === 'chat';
+    view.classList.toggle('chatmode', cm); $('#app').classList.toggle('chatmode', cm);
     const key = route.name + '|' + route.arg;
     if (key !== lastKey) { view.scrollTop = 0; lastKey = key; }
     renderTop(); renderNav();
@@ -165,6 +167,7 @@
       '<button data-act="go" data-to="points"><span>⭐</span>' + t('qb_points') + '</button>' +
       '<button data-act="go" data-to="rewards"><span>🎁</span>' + t('qb_rewards') + '</button>' +
       '<button data-act="go" data-to="plan"><span>🗓️</span>' + t('qb_plan') + '</button></div>' +
+      '<button class="wastebanner" data-act="go" data-to="scan"><span class="wb-i">♻️</span><span class="grow"><b>' + t('home_waste_title') + '</b><span class="wb-s">' + t('home_waste_sub') + '</span></span><span>›</span></button>' +
       '<div class="mapcard">' + islandSVG(pins) + '</div>' +
       '<p class="muted center">👆 ' + t('tap_hint') + '</p>';
   }
@@ -186,12 +189,14 @@
       '<p class="muted mt">' + (done === total ? t('mission_all') : t('mission_hint')) + ' · ' + t('mission_bonus', { n: D.missionBonus }) + '</p></div>' +
       D.missions.map(m => {
         const on = !!S.missions[m.id];
+        if (m.auto && !on) return '<div class="mission"><span class="check"></span><span class="grow">' + esc(L(m.title)) + '<div class="muted">' + t('mission_scan_hint') + '</div></span><button class="btn sm" data-act="go" data-to="scan">' + t('go_scan') + '</button></div>';
         return '<button class="mission ' + (on ? 'done' : '') + '" data-act="mission" data-id="' + m.id + '"><span class="check ' + (on ? 'on' : '') + '">' + (on ? '✓' : '') + '</span><span class="grow">' + esc(L(m.title)) + '</span><b class="price">+' + m.points + '</b></button>';
       }).join('');
   }
-  function doMission(id) {
+  function doMission(id, force) {
     const m = D.missions.find(x => x.id === id);
     if (!m || S.missions[id]) return;
+    if (m.auto && !force) { go('scan'); return; }
     S.missions[id] = true; save();
     addPoints(m.points, 'mission', L(m.title));
     toast(t('mission_get', { n: m.points }), 'ok');
@@ -213,6 +218,7 @@
       '<button class="btn mt" data-act="go" data-to="rewards">🎁 ' + t('go_rewards') + '</button></div>' +
       '<div class="card"><h3>' + t('by_source') + '</h3>' +
       SRC.map(s => '<div class="srcrow"><div class="row between"><span>' + SRC_ICON[s] + ' ' + t('src_' + s) + '</span><b>' + sums[s] + '</b></div><div class="bar"><i style="width:' + Math.round(sums[s] / max * 100) + '%"></i></div></div>').join('') + '</div>' +
+      '<div class="card"><h3>♻️ ' + t('waste_stats') + '</h3>' + Object.keys(D.wasteTypes).map(k => '<div class="row between srcrow"><span class="wchip" style="background:' + D.wasteTypes[k].color + '">' + D.wasteTypes[k].emoji + ' ' + esc(L(D.wasteTypes[k].name)) + '</span><b>' + ((S.waste.stats || {})[k] || 0) + ' ' + t('times') + '</b></div>').join('') + '</div>' +
       '<div class="card"><h3>' + t('history') + '</h3>' +
       (S.log.length ? S.log.slice(0, 40).map(e => '<div class="log"><div class="grow">' + SRC_ICON[e.src] + ' ' + esc(e.label) + '<div class="muted">' + t('src_' + e.src) + ' · ' + fmtTs(e.t) + '</div></div><b class="' + (e.n > 0 ? 'plus' : 'minus') + '">' + (e.n > 0 ? '+' : '') + e.n + '</b></div>').join('') : '<p class="muted">' + t('no_history') + '</p>') + '</div>';
   }
@@ -251,11 +257,14 @@
     let body = '';
     if (p.layer === 'food') body = '<p>🍽️ <b>' + t('menu_rec') + ':</b> ' + esc(L(p.menu)) + '</p><p>💰 <b>' + t('price_range') + ':</b> ' + esc(L(p.price)) + '</p>';
     else if (p.layer === 'history') body = '<p>📖 <b>' + t('story') + ':</b> ' + esc(L(p.story)) + '</p>';
-    else body = '<p>🗑️ <b>' + t('bin_types') + ':</b> ' + esc(L(p.bins)) + '</p>';
+    else body = '<p>🗑️ <b>' + t('bin_types') + ':</b> ' + esc(L(p.bins)) + '</p><p>' + wasteChips(p) + '</p><p class="muted">📷 ' + t('waste_pts_rule') + '</p>';
+    const main = p.layer === 'waste'
+      ? (done ? '<button class="btn block mt" data-act="gdispose" data-id="' + id + '">📷 ' + t('waste_go_photo') + '</button>' : '<button class="btn block mt" data-act="gscan">📷 ' + t('scan_qr_here') + '</button>')
+      : '<button class="btn block mt" data-act="checkin" data-id="' + id + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓ ' + t('checked') : '📍 ' + t('checkin')) + '</button>';
     openModal('<div class="grab"></div><div class="row"><div class="thumb">' + p.icon + '</div><div class="grow"><h3>' + esc(L(p.name)) + '</h3><div class="muted">' + t('layer_' + p.layer) + ' · ' + t('checkin_rule', { n: D.checkinPoints }) + '</div></div></div>' + body +
       '<div class="row mt"><button class="btn ghost grow" data-act="navigate" data-id="' + id + '">🧭 ' + t('navigate') + '</button>' +
       '<button class="btn ghost grow" data-act="padd" data-kind="pin" data-ref="' + id + '">🗓️ ' + t('plan_from_pin') + '</button></div>' +
-      '<button class="btn block mt" data-act="checkin" data-id="' + id + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓ ' + t('checked') : '📍 ' + t('checkin')) + '</button>' +
+      main +
       '<button class="btn ghost block mt" data-act="closeModal">' + t('close') + '</button>');
   }
 
@@ -373,7 +382,7 @@
     save(); toast(t('plan_added', { n: day }), 'ok');
     return true;
   }
-  function pPlan() {
+  function pPlanMine() {
     const P = S.plan, day = P.cur, list = planDay(day);
     const tabs = '<div class="daytabs">' + Array.from({ length: P.days }, (_, i) => '<button class="chip ' + (i + 1 === day ? 'on' : '') + '" data-act="pday" data-v="' + (i + 1) + '">📅 ' + t('plan_day', { n: i + 1 }) + '</button>').join('') +
       (P.days < 3 ? '<button class="chip" data-act="paddday">＋ ' + t('plan_add_day') + '</button>' : '') + '</div>';
@@ -424,6 +433,359 @@
     P.items = P.items.filter(i => i.day !== P.cur);
     if (P.days > 1) { P.items.forEach(i => { if (i.day > P.cur) i.day--; }); P.days--; P.cur = Math.min(P.cur, P.days); }
     save(); render();
+  }
+
+  /* ================= แชทบอทวางแผนเที่ยว (ตอบตามคำสำคัญในเบราว์เซอร์ ไม่ใช้ AI/เซิร์ฟเวอร์) ================= */
+  let typing = false, inputFocus = false, capped = false;
+  const freshChat = () => ({ msgs: [], prefs: { days: null, styles: null, squid: null, hire: null }, done: false });
+  function say(text, extra) {
+    S.chat.msgs.push(Object.assign({ from: 'bot', text: text }, extra || {}));
+    if (S.chat.msgs.length > 80) S.chat.msgs.splice(0, S.chat.msgs.length - 80);
+    save();
+  }
+  function ensureChat() {
+    if (!S.chat || !S.chat.msgs) S.chat = freshChat();
+    if (!S.chat.msgs.length) { say(t('chat_hello')); say(t('chat_q_days')); }
+  }
+  function expecting() {
+    const p = S.chat.prefs;
+    if (p.days == null) return 'days';
+    if (!p.styles) return 'styles';
+    if (p.squid == null) return 'squid';
+    if (p.hire == null) return 'hire';
+    return null;
+  }
+  function chipsFor(step) {
+    const m = { days: ['c_d1', 'c_d2', 'c_d3'], styles: ['c_s_chill', 'c_s_culture', 'c_s_food', 'c_s_photo', 'c_s_mix'], squid: ['c_sq_yes', 'c_sq_no'], hire: ['c_h_guide', 'c_h_photo', 'c_h_both', 'c_h_none'], done: ['c_mine', 'c_ferry', 'c_tide', 'c_food', 'c_restart'] }[step];
+    return m.map(k => t(k));
+  }
+
+  /* ชื่อเรียกอื่นของสถานที่/บริการ (ใช้หาเป้าหมายตอนสั่ง เพิ่ม/ลบ) */
+  const ALIAS = {
+    thamphang: ['หาดถ้ำพัง', 'หาด', 'beach', 'tham phang'], palace: ['พระจุฑาธุชราชฐาน', 'พระจุฑา', 'พระราชฐาน', 'วัง', 'palace'],
+    asadang: ['สะพานอัษฎางค์', 'สะพาน', 'bridge'], shrine: ['ศาลเจ้า', 'shrine'], pier: ['ท่าเทววงศ์', 'ท่าเรือ', 'pier'],
+    seacrack: ['ทะเลแหวก', 'sea path'], kerkhat: ['ช่องเขาขาด', 'ช่องเขา', 'khao khat'], lighthouse: ['ประภาคาร', 'lighthouse'],
+    footprint: ['รอยพระพุทธบาท', 'พระพุทธบาท', 'footprint'], cave: ['ถ้ำทะลุ', 'sea arch', 'thalu'], yaiprik: ['ยายปริก', 'yai prik'],
+    wat: ['อัษฎางค์นิมิต', 'วัดอัษฎางค์', 'atsadang'], ngu: ['แหลมงู', 'laem ngu'],
+    f1: ['ครัวริมเล', 'rim le'], f2: ['ก๋วยเตี๋ยวเรือ', 'boat noodle'], f3: ['คาเฟ่ลมทะเล', 'คาเฟ่', 'sea breeze', 'cafe'], f4: ['ป้าแดง', 'pa daeng'],
+    sq1: ['เรือไดหมึก', 'ไดหมึก', 'squid'], s1: ['ไกด์', 'guide'], s4: ['ช่างภาพ', 'photographer']
+  };
+  function findTarget(s) {
+    let best = null, len = 0;
+    Object.keys(ALIAS).forEach(id => ALIAS[id].forEach(a => { if (s.indexOf(a) >= 0 && a.length > len) { best = id; len = a.length; } }));
+    return best;
+  }
+
+  /* ---------- อ่านความต้องการจากข้อความ ---------- */
+  function parsePrefs(s) {
+    const p = S.chat.prefs, exp = expecting();
+    capped = false;
+    const dm = s.match(/(\d)\s*(วัน|day)/);
+    if (/วันเดียว|one day|day trip/.test(s)) p.days = 1;
+    else if (dm) { const n = +dm[1]; if (n > 3) capped = true; p.days = Math.min(3, Math.max(1, n)); }
+    const st = [];
+    if (/ทุกอย่าง|ผสม|\bmix\b|everything/.test(s)) st.push('mix');
+    else {
+      if (/ชิล|ทะเล|หาด|พักผ่อน|chill|beach|relax/.test(s)) st.push('chill');
+      if (/วัฒนธรรม|วัด|ศาล|ประวัติ|culture|temple|shrine|history/.test(s)) st.push('culture');
+      if (/สายกิน|กิน|อาหาร|food|\beat\b/.test(s)) st.push('food');
+      if (/ถ่ายรูป|ถ่ายภาพ|วิว|insta|scenic|\bphotos?\b/.test(s)) st.push('photo');
+    }
+    if (st.length) p.styles = st;
+    if (/ไม่.{0,12}หมึก|no squid|skip squid|don'?t.*squid/.test(s)) p.squid = false;
+    else if (/หมึก|squid/.test(s)) p.squid = true;
+    if (/ไม่(ต้อง|เอา)?(จ้าง|ไกด์|ช่างภาพ|ใคร)|no hire|no guide|none/.test(s)) p.hire = 'none';
+    else {
+      const g = /ไกด์|guide/.test(s), ph = /ช่างภาพ|photographer/.test(s);
+      if (/ทั้งคู่|both/.test(s) || (g && ph)) p.hire = 'both';
+      else if (g) p.hire = 'guide';
+      else if (ph) p.hire = 'photo';
+    }
+    const no = /^(ไม่|no\b|nope)/, yes = /^(ใช่|เอา|ได้|ไป|สนใจ|โอเค|ok|yes|y\b|sure)/;
+    if (exp === 'squid' && p.squid == null) { if (no.test(s)) p.squid = false; else if (yes.test(s)) p.squid = true; }
+    if (exp === 'hire' && p.hire == null && no.test(s)) p.hire = 'none';
+  }
+
+  /* ---------- สร้างแผนจากความต้องการ ---------- */
+  const POOLS = { chill: ['thamphang', 'seacrack', 'ngu', 'asadang', 'cave'], culture: ['shrine', 'footprint', 'yaiprik', 'wat', 'palace', 'kerkhat'], photo: ['asadang', 'kerkhat', 'seacrack', 'lighthouse', 'cave', 'thamphang', 'palace'], food: ['palace', 'asadang', 'thamphang', 'lighthouse', 'ngu'] };
+  function genPlan(p) {
+    const days = p.days, has = k => !!p.styles && p.styles.indexOf(k) >= 0;
+    const styles = (p.styles && p.styles.indexOf('mix') < 0) ? p.styles : ['mix'];
+    const all = D.pins.filter(x => x.layer === 'history' && x.id !== 'pier').map(x => x.id);
+    const cand = [];
+    styles.forEach(st => (POOLS[st] || all).forEach(id => { if (cand.indexOf(id) < 0) cand.push(id); }));
+    all.forEach(id => { if (cand.indexOf(id) < 0) cand.push(id); });
+    const caps = [4, 5, 5], needed = caps.slice(0, days).reduce((a, b) => a + b, 0), take = cand.slice(0, Math.min(needed, cand.length));
+    const counts = Array(days).fill(0);
+    for (let i = 0, k = 0; k < take.length; i = (i + 1) % days) { if (counts[i] < caps[i]) { counts[i]++; k++; } }
+    const foods = has('food') ? ['f1', 'f4', 'f2', 'f3'] : ['f1', 'f2', 'f4', 'f3'];
+    const out = []; let idx = 0;
+    for (let d = 0; d < days; d++) {
+      const ids = take.slice(idx, idx + counts[d]); idx += counts[d];
+      ids.sort((a, b) => (pinById(a).y - pinById(b).y) * (d % 2 ? -1 : 1));
+      const slots = d === 0 ? ['10:00', '11:00', '14:00', '15:30'] : ['09:00', '10:00', '11:00', '14:00', '15:30'];
+      const day = [];
+      if (d === 0) day.push({ ref: 'pier', time: '09:00' });
+      ids.forEach((id, i) => day.push({ ref: id, time: slots[i] }));
+      day.push({ ref: foods[d % foods.length], time: '12:30' });
+      if (has('food')) day.push({ ref: foods[(d + 2) % foods.length], time: '16:00' });
+      if (d === 0) {
+        if (p.hire === 'guide' || p.hire === 'both') day.push({ ref: has('culture') ? 's7' : 's1', time: '09:00' });
+        if (p.hire === 'photo' || p.hire === 'both') day.push({ ref: has('photo') ? 's10' : 's4', time: days === 1 ? '09:30' : '16:00' });
+        if (p.squid) day.push({ ref: has('food') ? 'sq4' : 'sq1', time: '17:30' });
+      }
+      out.push(day);
+    }
+    return out;
+  }
+  function finishPlan(replan) {
+    const C = S.chat, days = genPlan(C.prefs), items = []; let uid = 1;
+    days.forEach((d, di) => d.forEach(e => items.push({ uid: uid++, day: di + 1, kind: planKind(e.ref), ref: e.ref, time: e.time })));
+    S.plan = { days: days.length, cur: 1, items: items, seq: uid };
+    C.done = true; save();
+    say(replan ? t('chat_replan') : t('chat_plan_ready', { n: days.length }), { days: days });
+    say(t('chat_plan_tip', { t: D.ferry.toMainland[D.ferry.toMainland.length - 1] }));
+  }
+
+  /* ---------- คำตอบข้อมูลต่างๆ ---------- */
+  function chatFerry() {
+    const a = nextDep(D.ferry.toIsland), b = nextDep(D.ferry.toMainland), tm = x => x.time + (x.tomorrow ? ' (' + t('tomorrow') + ')' : ''), cd = x => fmtCd(x.ms).slice(0, 5);
+    say(t('chat_ferry', { a: tm(a), am: cd(a), b: tm(b), bm: cd(b), fare: D.ferry.fare }));
+  }
+  function chatTide() {
+    const ex = tideExtrema(), hi = ex.filter(e => e.type === 'high').sort((a, b) => b.v - a.v)[0], lo = ex.filter(e => e.type === 'low').sort((a, b) => a.v - b.v)[0];
+    say(t('chat_tide', { hi: hh(hi.h), lo: hh(lo.h) }));
+  }
+  function chatPoints() { say(t('chat_points', { n: S.points, r: D.rewards.map(r => L(r.name) + ' (' + r.cost + ' ' + t('pts') + ')').join(', ') })); }
+  function chatEmergency() { say(t('chat_emergency') + '\n' + D.emergency.map(e => e.icon + ' ' + L(e.name) + ' ' + e.phone).join('\n')); }
+  function chatSquidPrice() { say(t('chat_squid_price') + '\n' + D.services.filter(x => x.cat === 'squid').map(x => '🦑 ' + L(x.name) + ' · ' + money(x.price) + ' ' + (x.unit === 'person' ? t('per_person') : t('per_trip'))).join('\n'), { chips: [t('c_sq_yes'), t('c_mine')] }); }
+  function chatFoodTips() {
+    const fs = D.pins.filter(x => x.layer === 'food');
+    say(t('chat_food_intro') + '\n' + fs.map(x => x.icon + ' ' + L(x.name) + ' · ' + L(x.price)).join('\n'), { chips: fs.map(x => t('chat_add_word') + ' ' + L(x.name)) });
+  }
+  function chatShowPlan() {
+    if (!S.plan.items.length) { say(t('chat_empty_plan')); return; }
+    say(t('chat_your_plan'), { days: Array.from({ length: S.plan.days }, (_, i) => planDay(i + 1).map(it => ({ ref: it.ref, time: it.time }))) });
+  }
+  function chatAdd(ref) {
+    const kind = planKind(ref), inf = planInfo({ kind: kind, ref: ref });
+    say(addToPlan(kind, ref) ? t('chat_added', { name: inf.name, n: S.plan.cur }) : t('chat_dup'));
+  }
+  function chatRemove(ref) {
+    const inf = planInfo({ kind: planKind(ref), ref: ref});
+    let i = S.plan.items.findIndex(x => x.ref === ref && x.day === S.plan.cur);
+    if (i < 0) i = S.plan.items.findIndex(x => x.ref === ref);
+    if (i < 0) { say(t('chat_notin', { name: inf.name })); return; }
+    S.plan.items.splice(i, 1); save();
+    say(t('chat_removed', { name: inf.name }));
+  }
+
+  function botReply(text) {
+    const s = text.toLowerCase(), C = S.chat, p = C.prefs;
+    if (/เริ่มใหม่|รีเซ็ต|restart|reset|start over/.test(s)) { S.chat = freshChat(); say(t('chat_reset_done')); say(t('chat_hello')); say(t('chat_q_days')); return; }
+    const add = /เพิ่ม|ใส่|\badd\b|include/.test(s), del = /ลบ|เอาออก|ตัดออก|remove|delete/.test(s);
+    if (add || del) {
+      const r = findTarget(s);
+      if (r && del) { chatRemove(r); return; }
+      if (r && add) { chatAdd(r); return; }
+      if (add && /ร้านอาหาร|restaurant|อาหาร/.test(s)) { chatFoodTips(); return; }
+    }
+    if (/(ราคา|เท่าไหร่|เท่าไร|price|how much|cost).*(หมึก|squid)|(หมึก|squid).*(ราคา|เท่าไหร่|เท่าไร|price|cost)/.test(s)) { chatSquidPrice(); return; }
+    if (/น้ำขึ้น|น้ำลง|tide/.test(s)) { chatTide(); return; }
+    if (!/หมึก|squid/.test(s) && /เวลาเรือ|ตารางเรือ|เที่ยวเรือ|รอบเรือ|เรือ(ออก|กลับ|ไป)|เรือ.*กี่โมง|กี่โมง.*เรือ|ferry|boat time|ท่าเรือ/.test(s)) { chatFerry(); return; }
+    if (/ขยะ|waste|trash|recycl|\bqr\b|สแกน|\bscan\b/.test(s)) { say(t('chat_waste')); return; }
+    if (/แต้ม|point|รางวัล|reward|แลก/.test(s)) { chatPoints(); return; }
+    if (/ฉุกเฉิน|emergency|\bsos\b/.test(s)) { chatEmergency(); return; }
+    if (/ดูแผน|แผนของฉัน|my plan|show plan|แผนตอนนี้/.test(s)) { chatShowPlan(); return; }
+    if (/แนะนำ.*(ร้าน|อาหาร)|ร้านอาหาร|restaurant|where to eat|ร้านไหน/.test(s)) { chatFoodTips(); return; }
+    if (/^(สวัสดี|หวัดดี)|^(hello|hi|hey)\b|ช่วยอะไร|ทำอะไรได้|\bhelp\b/.test(s)) { say(t('chat_help')); const e = expecting(); if (e) say(t('chat_q_' + e)); return; }
+    const before = JSON.stringify(p), wasDone = C.done;
+    parsePrefs(s);
+    if (JSON.stringify(p) === before) { say(t('chat_fallback')); return; }
+    if (capped) say(t('chat_days_cap'));
+    if (p.squid === true && p.days === 1) { p.days = 2; say(t('chat_squid_night')); }
+    const exp = expecting();
+    if (exp) say(t('chat_ok') + ' ' + t('chat_q_' + exp));
+    else finishPlan(wasDone);
+  }
+  function sendChat(text) {
+    text = (text || '').trim();
+    if (!text) return;
+    ensureChat();
+    S.chat.msgs.push({ from: 'me', text: text }); save();
+    typing = true; render();
+    setTimeout(() => {
+      typing = false;
+      botReply(text);
+      if (route.name === 'plan' && planTab === 'chat') render();
+    }, 500);
+  }
+
+  function cardHTML(days) {
+    const html = days.map((d, i) => '<div class="cday"><b>📅 ' + t('plan_day', { n: i + 1 }) + '</b>' +
+      d.slice().sort((a, b) => a.time.localeCompare(b.time)).map(e => {
+        const inf = planInfo({ kind: planKind(e.ref), ref: e.ref });
+        if (!inf) return '';
+        const price = inf.svc ? ' <span class="muted">' + money(inf.svc.price) + (inf.svc.unit === 'person' ? ' ' + t('per_person') : '') + '</span>' : '';
+        return '<div class="crow"><span class="ct">' + esc(e.time) + '</span><span>' + inf.emoji + ' ' + esc(inf.name) + price + '</span></div>';
+      }).join('') + '</div>').join('');
+    return '<div class="plancard">' + html + '<button class="btn sm block" data-act="ptab" data-v="mine">🗓️ ' + t('chat_open_mine') + '</button></div>';
+  }
+  function chatHTML() {
+    ensureChat();
+    const C = S.chat, last = C.msgs[C.msgs.length - 1];
+    const msgs = C.msgs.map(m => m.from === 'me'
+      ? '<div class="msg me"><div class="bub">' + esc(m.text) + '</div></div>'
+      : '<div class="msg bot"><span class="bav">🐚</span><div class="bub">' + esc(m.text || '') + (m.days ? cardHTML(m.days) : '') + '</div></div>').join('') +
+      (typing ? '<div class="msg bot"><span class="bav">🐚</span><div class="bub typing"><i></i><i></i><i></i></div></div>' : '');
+    const chips = (last && last.from === 'bot' && last.chips) || chipsFor(expecting() || 'done');
+    afterFn = () => { const m = $('#msgs'); if (m) m.scrollTop = m.scrollHeight; if (inputFocus) { const i = $('#chatin'); if (i) i.focus(); } };
+    return '<div class="chatwrap"><div class="msgs" id="msgs">' + msgs + '</div>' +
+      '<div class="cchips">' + chips.map(c => '<button class="chip" data-act="chip" data-text="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div>' +
+      '<div class="chatin"><input id="chatin" type="text" autocomplete="off" placeholder="' + esc(t('chat_ph')) + '"><button class="btn" data-act="chatsend" aria-label="send">➤</button></div>' +
+      '<div class="muted center" style="font-size:11px;margin-top:4px">' + t('chat_note') + '</div></div>';
+  }
+  function pPlan() {
+    const tabs = '<div class="seg planseg"><button class="' + (planTab === 'chat' ? 'on' : '') + '" data-act="ptab" data-v="chat">💬 ' + t('plan_tab_chat') + '</button><button class="' + (planTab === 'mine' ? 'on' : '') + '" data-act="ptab" data-v="mine">🗓️ ' + t('plan_tab_mine', { n: S.plan.items.length }) + '</button></div>';
+    return tabs + (planTab === 'chat' ? chatHTML() : pPlanMine());
+  }
+
+  /* ================= ทิ้งขยะรับแต้ม: สแกน QR → ถ่ายรูป → AI ตรวจ ================= */
+  const wastePins = () => D.pins.filter(p => p.layer === 'waste');
+  function wasteToday() {
+    const W = S.waste;
+    if (W.date !== ymd()) { W.date = ymd(); W.count = 0; W.hashes = []; save(); }
+    return W;
+  }
+  const freshDz = () => ({ img: null, busy: false, res: null, demo: (typeof dz !== 'undefined' && dz && dz.demo) || 'auto' });
+  let dz = { img: null, busy: false, res: null, demo: 'auto' };
+
+  function doScan(code) {
+    code = String(code || '').trim().toUpperCase();
+    const p = wastePins().find(x => x.code === code);
+    if (!p) { toast(t('scan_bad'), 'err'); return; }
+    const key = 'p_' + p.id + '|' + ymd();
+    if (!S.checkins[key]) {
+      S.checkins[key] = true;
+      addPoints(D.checkinPoints, 'waste', L(p.name) + ' (QR)');
+      toast(t('scan_ok', { n: D.checkinPoints }), 'ok');
+      const m = D.missions.find(x => x.auto === 'scan');
+      if (m && !S.missions[m.id]) doMission(m.id, true);
+    } else toast(t('scan_again'), '');
+    dz = freshDz();
+    go('dispose', p.id);
+  }
+  function pScan() {
+    const rows = wastePins().map(p => {
+      const done = pinDone(p.id);
+      return '<div class="item" style="cursor:default"><div class="thumb" style="width:48px;height:48px;font-size:24px">' + p.icon + '</div><div class="grow"><b>' + esc(L(p.name)) + '</b><div class="muted">' + esc(p.code) + (done ? ' · ✅ ' + t('scan_done_today') : '') + '</div></div>' +
+        (done ? '<button class="btn sm" data-act="gdispose" data-id="' + p.id + '" aria-label="photo">📷</button>' : '') +
+        '<button class="btn sm ghost" data-act="scanqr" data-code="' + esc(p.code) + '">' + t('scan_sim') + '</button></div>';
+    }).join('');
+    return '<div class="scanbox"><i class="cr tl"></i><i class="cr tr"></i><i class="cr bl"></i><i class="cr br"></i><div class="scanline"></div><div class="qrfake">▦</div></div>' +
+      '<p class="center" style="margin:10px 0 2px"><b>' + t('scan_hint') + '</b></p><p class="muted center" style="margin:0 0 12px">' + t('scan_proto') + '</p>' +
+      '<div class="card"><div class="row"><input id="qrin" type="text" autocomplete="off" placeholder="' + esc(t('scan_code_ph')) + '" style="flex:1;min-width:0;padding:11px 12px;border:1.5px solid var(--line);border-radius:12px"><button class="btn" data-act="scancode">' + t('scan_confirm') + '</button></div></div>' +
+      '<h3 style="margin:14px 0 8px">♻️ ' + t('scan_points') + '</h3>' + rows;
+  }
+
+  /* ---- อ่านรูป + ย่อขนาด + หาค่าสถิติคร่าวๆ ---- */
+  function readImage(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = reject;
+      fr.onload = () => {
+        const im = new Image();
+        im.onerror = reject;
+        im.onload = () => {
+          const k = Math.min(1, 640 / Math.max(im.width, im.height)), w = Math.max(1, Math.round(im.width * k)), h = Math.max(1, Math.round(im.height * k));
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          c.getContext('2d').drawImage(im, 0, 0, w, h);
+          const sm = document.createElement('canvas'); sm.width = 32; sm.height = 32;
+          const sx = sm.getContext('2d'); sx.drawImage(im, 0, 0, 32, 32);
+          const px = sx.getImageData(0, 0, 32, 32).data;
+          let sum = 0, sq = 0, hash = 5381, n = 0;
+          for (let i = 0; i < px.length; i += 4) { const g = px[i] * 0.3 + px[i + 1] * 0.59 + px[i + 2] * 0.11; sum += g; sq += g * g; n++; hash = ((hash * 33) ^ Math.round(g / 8)) >>> 0; }
+          const mean = sum / n;
+          resolve({ dataUrl: c.toDataURL('image/jpeg', 0.7), hash: String(hash), mean: mean, std: Math.sqrt(Math.max(0, sq / n - mean * mean)) });
+        };
+        im.src = fr.result;
+      };
+      fr.readAsDataURL(file);
+    });
+  }
+  /* AI จำลอง: ภาพเกือบเรียบ/มืดสนิท = ไม่พบขยะ, นอกนั้นเดาประเภทจากรูป (ผลเดิมเมื่อรูปเดิม) | เลือกผลเองได้ในโหมดสาธิต */
+  function mockAI(info) {
+    let item = null;
+    if (dz.demo === 'none') return { hasWaste: false, hash: info.hash, mock: true };
+    if (dz.demo !== 'auto') item = D.wasteItems.find(x => x.id === dz.demo);
+    else if (info.std < 14 || info.mean < 18) return { hasWaste: false, hash: info.hash, mock: true };
+    else item = D.wasteItems[parseInt(info.hash, 10) % D.wasteItems.length];
+    return { hasWaste: true, type: item.type, name: item.name, conf: 0.82 + (parseInt(info.hash, 10) % 15) / 100, mock: true, hash: info.hash };
+  }
+  /* ถ้าตั้ง DATA.aiEndpoint จะส่งรูปไปให้ backend ที่เรียก AI จริง (ต้องตอบ JSON: {hasWaste, type, item, confidence}) */
+  function runAI(info) {
+    if (wasteToday().hashes.indexOf(info.hash) >= 0) return Promise.resolve({ dup: true });
+    if (D.aiEndpoint) {
+      return fetch(D.aiEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: info.dataUrl, lang: S.lang }) })
+        .then(r => r.json())
+        .then(j => ({ hasWaste: !!j.hasWaste, type: D.wasteTypes[j.type] ? j.type : 'general', name: j.item || j.type || '', conf: j.confidence, real: true, hash: info.hash }))
+        .catch(() => { toast(t('ai_err_fallback'), 'warn'); return mockAI(info); });
+    }
+    return new Promise(res => setTimeout(() => res(mockAI(info)), 1300));
+  }
+  function analyzePhoto(file) {
+    dz.busy = true; dz.res = null; dz.img = null; render();
+    readImage(file).then(info => { dz.img = info.dataUrl; render(); return runAI(info); })
+      .then(res => { dz.res = res; dz.busy = false; if (route.name === 'dispose') render(); })
+      .catch(() => { dz.busy = false; toast(t('ai_err'), 'err'); if (route.name === 'dispose') render(); });
+  }
+
+  function nearestAccepting(p, type) {
+    return wastePins().filter(x => x.id !== p.id && x.accepts.indexOf(type) >= 0).sort((a, b) => Math.hypot(a.x - p.x, a.y - p.y) - Math.hypot(b.x - p.x, b.y - p.y))[0];
+  }
+  const wasteChips = p => p.accepts.map(k => { const ty = D.wasteTypes[k]; return '<span class="wchip" style="background:' + ty.color + '">' + ty.emoji + ' ' + esc(L(ty.name)) + '</span>'; }).join('');
+  function demoHTML() {
+    return '<details class="card mt"><summary class="muted">' + t('demo_title') + '</summary><select data-change="demoai" style="width:100%;margin-top:8px;padding:10px;border-radius:12px;border:1.5px solid var(--line)"><option value="auto" ' + (dz.demo === 'auto' ? 'selected' : '') + '>' + t('demo_auto') + '</option>' +
+      D.wasteItems.map(i => '<option value="' + i.id + '" ' + (dz.demo === i.id ? 'selected' : '') + '>' + esc(L(i.name)) + '</option>').join('') +
+      '<option value="none" ' + (dz.demo === 'none' ? 'selected' : '') + '>' + t('demo_none') + '</option></select></details>';
+  }
+  function resultHTML(p, left) {
+    const r = dz.res, img = dz.img ? '<img class="wimg" src="' + dz.img + '" alt="">' : '';
+    const retake = '<button class="btn ghost block mt" data-act="wretake">📷 ' + t('retake') + '</button>';
+    if (r.dup) return img + '<div class="warn">🔁 ' + t('ai_dup') + '</div>' + retake;
+    if (!r.hasWaste) return img + '<div class="warn">❌ ' + t('ai_none') + '</div>' + retake;
+    const ty = D.wasteTypes[r.type], okBin = p.accepts.indexOf(r.type) >= 0, name = (r.name && typeof r.name === 'object') ? L(r.name) : String(r.name || '');
+    let verdict;
+    if (okBin) verdict = '<div class="okbox">✅ ' + t('ai_match') + '</div>';
+    else { const np = nearestAccepting(p, r.type); verdict = '<div class="warn">⚠️ ' + t('ai_mismatch', { p: np ? L(np.name) : '-' }) + '</div>'; }
+    const cap = okBin && left <= 0;
+    return img + '<div class="card"><div class="muted">' + (r.mock ? t('ai_label_mock') : t('ai_label')) + ' · ' + t('ai_conf') + ' ' + Math.round((r.conf || 0.9) * 100) + '%</div>' +
+      '<h3 style="margin:4px 0">' + t('ai_found') + ': ' + esc(name) + '</h3><span class="wchip" style="background:' + ty.color + '">' + ty.emoji + ' ' + esc(L(ty.name)) + '</span></div>' + verdict +
+      (cap ? '<div class="warn">' + t('cap_reached', { n: D.wasteDailyCap }) + '</div>' : '') +
+      (okBin ? '<button class="btn block" data-act="wclaim" ' + (cap ? 'disabled' : '') + '>✅ ' + t('claim', { n: ty.points }) + '</button>' : '') + retake;
+  }
+  function pDispose() {
+    const p = pinById(route.arg);
+    if (!p || p.layer !== 'waste' || !pinDone(p.id)) return '<div class="card center"><p>' + t('need_scan') + '</p><button class="btn" data-act="go" data-to="scan">' + t('go_scan') + '</button></div>';
+    const W = wasteToday(), left = D.wasteDailyCap - W.count;
+    let body;
+    if (dz.busy) body = (dz.img ? '<img class="wimg" src="' + dz.img + '" alt="">' : '') + '<div class="card center"><div class="typing" style="justify-content:center"><i></i><i></i><i></i></div><p class="muted">' + t('ai_checking') + '</p></div>';
+    else if (dz.res) body = resultHTML(p, left);
+    else body = '<div class="card center muted">' + t('photo_hint') + '</div>';
+    return '<div class="card"><div class="row"><div class="thumb">' + p.icon + '</div><div class="grow"><b>' + esc(L(p.name)) + '</b><div class="muted">📍 ' + esc(p.code) + ' · ' + t('today_count') + ' ' + W.count + '/' + D.wasteDailyCap + '</div></div></div>' +
+      '<div class="mt"><span class="muted">' + t('accepts') + ':</span> ' + wasteChips(p) + '</div><p class="muted" style="margin-bottom:0">' + t('waste_pts_rule') + '</p></div>' + body +
+      (!dz.busy && !dz.res ? '<label class="btn block coral" style="text-align:center"><input type="file" accept="image/*" capture="environment" data-change="wphoto" hidden>' + t('photo_btn') + '</label>' + demoHTML() : '');
+  }
+  function doWasteClaim() {
+    const p = pinById(route.arg), r = dz.res;
+    if (!p || !r || !r.hasWaste || p.accepts.indexOf(r.type) < 0) return;
+    const W = wasteToday();
+    if (W.count >= D.wasteDailyCap) { toast(t('cap_reached', { n: D.wasteDailyCap }), 'warn'); return; }
+    const ty = D.wasteTypes[r.type], nm = (r.name && typeof r.name === 'object') ? L(r.name) : String(r.name || '');
+    W.count++; W.hashes.push(r.hash); W.stats[r.type] = (W.stats[r.type] || 0) + 1;
+    addPoints(ty.points, 'waste', nm + ' → ' + L(ty.name).replace(/\s*[(（].*$/, ''));
+    toast(t('claim_ok', { n: ty.points }), 'ok');
+    dz = freshDz(); render();
   }
 
   /* ================= Flow 5: เดินทาง ================= */
@@ -577,6 +939,15 @@
       case 'pay': doPay(); break;
       case 'finish': doFinish(d.id); break;
       case 'status': go('status', d.id); break;
+      case 'ptab': planTab = d.v; render(); break;
+      case 'chip': inputFocus = false; sendChat(d.text); break;
+      case 'chatsend': { const el = $('#chatin'); inputFocus = true; sendChat(el ? el.value : ''); break; }
+      case 'gscan': closeModal(); go('scan'); break;
+      case 'gdispose': closeModal(); dz = freshDz(); go('dispose', d.id); break;
+      case 'scanqr': doScan(d.code); break;
+      case 'scancode': { const el = $('#qrin'); doScan(el ? el.value : ''); break; }
+      case 'wclaim': doWasteClaim(); break;
+      case 'wretake': dz = freshDz(); render(); break;
       case 'fdir': ferryDir = d.v; render(); break;
       case 'vtype': rideForm.type = d.v; render(); break;
       case 'sendRide': doSendRide(); break;
@@ -599,10 +970,16 @@
     else if (k === 'pay') { payMethod = v; }
     else if (k === 'pick') { rideForm.pick = v; }
     else if (k === 'drop') { rideForm.drop = v; }
+    else if (k === 'wphoto') { const f = el.files && el.files[0]; if (f) analyzePhoto(f); }
+    else if (k === 'demoai') { dz.demo = v; }
     else if (k === 'ptime') { const it = S.plan.items.find(i => i.uid === +el.dataset.uid); if (it && v) { it.time = v; save(); render(); } }
   });
   document.addEventListener('keydown', e => {
     if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('pin')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.isComposing && e.target && e.target.id === 'chatin') { e.preventDefault(); inputFocus = true; sendChat(e.target.value); }
   });
 
   /* ---------- offline + ferry reminder ---------- */
